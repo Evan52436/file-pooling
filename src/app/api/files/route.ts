@@ -1,28 +1,61 @@
-// File: src/app/api/upload/route.ts
-// -------------------------------------------------------------------------
 import { NextResponse } from "next/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "../../../lib/s3";
 
-export async function POST(request: Request) {
+// ============================================================================
+// GET: Handles frontend requests to read the ledger/metadata
+// ============================================================================
+export async function GET(request: Request) {
   try {
-    const { filename, contentType } = await request.json();
+    // NOTE: This is where your Supabase fetching logic will go
+    // const { data, error } = await supabase.from('files').select('*');
+    
+    return NextResponse.json({ message: "Ledger route ready and listening" }, { status: 200 });
+  } catch (error) {
+    console.error("Ledger fetch failure:", error);
+    return NextResponse.json({ error: "Failed to fetch ledger data" }, { status: 500 });
+  }
+}
 
-    if (!filename || !contentType) {
-      return NextResponse.json(
-        { error: "Missing filename or contentType parameters" },
-        { status: 400 }
-      );
-    }
+// ============================================================================
+// POST: Handles presigned S3 URLs and Ledger writes
+// ============================================================================
+export async function POST(request: Request) {
+  // 1. Strict Infrastructure Guard
+  if (!process.env.MINIO_BUCKET_NAME) {
+    console.error("CRITICAL: MINIO_BUCKET_NAME environment variable is missing.");
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
 
-    // Sanitize and generate an immutable unique path within the bucket
-    const fileExtension = filename.split(".").pop();
+  // 2. Safe JSON Parsing
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return NextResponse.json({ error: "Malformed or missing JSON body" }, { status: 400 });
+  }
+
+  const { filename, contentType } = body;
+
+  // 3. Payload Validation
+  if (!filename || !contentType) {
+    return NextResponse.json(
+      { error: "Missing filename or contentType parameters" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    // 4. Bulletproof Extension Extraction
+    const fileParts = filename.split(".");
+    const fileExtension = fileParts.length > 1 ? fileParts.pop() : "bin"; // Defaults to .bin if no extension exists
     const uniqueId = crypto.randomUUID();
     const storageKey = `uploads/${uniqueId}.${fileExtension}`;
 
+    // 5. Cryptographic Signing
     const command = new PutObjectCommand({
-      Bucket: process.env.MINIO_BUCKET_NAME!,
+      Bucket: process.env.MINIO_BUCKET_NAME,
       Key: storageKey,
       ContentType: contentType,
     });
