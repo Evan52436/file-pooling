@@ -121,7 +121,7 @@ export default function DriveDashboard() {
     }
   };
 
-  // 2. The Download Click (Invisible Link Hack)
+ // 2. The Download Click (Direct Intercept Hack)
   const handleDownloadAction = async (e: React.MouseEvent, storageKey: string, filename: string) => {
     e.stopPropagation(); // Stops the preview modal from opening
 
@@ -135,13 +135,9 @@ export default function DriveDashboard() {
       if (!res.ok) throw new Error("Failed to get download link");
       const { downloadUrl } = await res.json();
       
-      // The React Invisible Link Trick: Bypasses pop-up blockers by simulating a real DOM click
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.setAttribute("download", filename);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Because the backend now perfectly formats the Content-Disposition header,
+      // window.location.assign will trigger a silent download without leaving the page.
+      window.location.assign(downloadUrl);
     } catch (error) {
       console.error("Download failed:", error);
       alert("Failed to download the file.");
