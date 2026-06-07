@@ -81,33 +81,66 @@ export default function DriveDashboard() {
       }, 800);
 
     } catch (error) {
-      console.error("Pipeline failure executed:", error);
-      alert("Upload pipeline crashed. Check terminal network execution trace.");
+      console.error("Pipeline failure:", error);
+      alert("Upload pipeline crashed. Check console.");
       setIsUploading(false);
       setUploadProgress(0);
     }
   };
 
-  const handlePreview = async (storageKey: string) => {
+  // 1. The Row Click (Preview Action)
+  const handlePreviewRowClick = async (storageKey: string) => {
+    // Open a blank tab instantly to bypass pop-up blockers
+    const previewTab = window.open('about:blank', '_blank');
+    if (!previewTab) {
+      alert("Please allow pop-ups to preview files.");
+      return;
+    }
+
     try {
       const res = await fetch("/api/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storageKey }),
+        body: JSON.stringify({ storageKey, action: "preview" }),
       });
 
       if (!res.ok) throw new Error("Failed to get preview link");
       const { downloadUrl } = await res.json();
       
-      // Opens the presigned URL. Browsers natively preview images, audio, and PDFs.
-      window.open(downloadUrl, "_blank");
+      // Redirect the blank tab to the actual file
+      previewTab.location.href = downloadUrl;
     } catch (error) {
       console.error("Preview failed:", error);
-      alert("Failed to securely fetch the file.");
+      previewTab.close();
+      alert("Failed to preview the file.");
     }
   };
 
-  const handleDelete = async (id: string, storageKey: string) => {
+  // 2. The Specific Button Click (Download Action)
+  const handleDownloadAction = async (e: React.MouseEvent, storageKey: string, filename: string) => {
+    e.stopPropagation(); // Stops the row's preview click from firing
+
+    try {
+      const res = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storageKey, action: "download", filename }),
+      });
+
+      if (!res.ok) throw new Error("Failed to get download link");
+      const { downloadUrl } = await res.json();
+      
+      // Force background download
+      window.location.href = downloadUrl;
+    } catch (error) {
+      console.error("Download failed:", error);
+      alert("Failed to download the file.");
+    }
+  };
+
+  // 3. The Specific Button Click (Delete Action)
+  const handleDeleteAction = async (e: React.MouseEvent, id: string, storageKey: string) => {
+    e.stopPropagation(); // Stops the row's preview click from firing
     if (!window.confirm("Are you sure you want to permanently delete this file?")) return;
     
     try {
@@ -118,8 +151,6 @@ export default function DriveDashboard() {
       });
 
       if (!res.ok) throw new Error("Deletion failed");
-      
-      // Instantly refresh the UI to remove the deleted file
       fetchFiles();
     } catch (error) {
       console.error("Delete failed:", error);
@@ -133,7 +164,6 @@ export default function DriveDashboard() {
         
         <header className="border-b border-slate-200 pb-6">
           <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Object Storage</h1>
-          {/* Subtitle successfully removed as requested */}
         </header>
 
         <section className="bg-white shadow-sm border border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all hover:border-[#9cb4d4]">
@@ -166,9 +196,14 @@ export default function DriveDashboard() {
             ) : (
               <ul className="divide-y divide-slate-100">
                 {files.map((file) => (
-                  <li key={file.id} className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200">
+                  <li 
+                    key={file.id} 
+                    onClick={() => handlePreviewRowClick(file.storage_key)}
+                    className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
+                    title="Click to Preview"
+                  >
                     <div className="space-y-1 max-w-[50%]">
-                      <p className="font-mono font-bold text-base truncate text-slate-800">{file.name}</p>
+                      <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">{file.name}</p>
                       <p className="text-xs text-slate-500 font-medium">
                         {(file.size / 1024 / 1024).toFixed(2)} MB • {file.mime_type}
                       </p>
@@ -180,14 +215,14 @@ export default function DriveDashboard() {
                       </span>
                       
                       <button 
-                        onClick={() => handlePreview(file.storage_key)}
+                        onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
                         className="bg-[#9cb4d4] hover:bg-[#86a1c4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
                       >
-                        Preview
+                        Download
                       </button>
 
                       <button 
-                        onClick={() => handleDelete(file.id, file.storage_key)}
+                        onClick={(e) => handleDeleteAction(e, file.id, file.storage_key)}
                         className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#fdf3f3] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
                       >
                         Delete
