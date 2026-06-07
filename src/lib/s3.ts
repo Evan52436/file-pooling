@@ -9,7 +9,7 @@ if (!process.env.MINIO_ENDPOINT || !process.env.MINIO_ACCESS_KEY || !process.env
 export const s3Client = new S3Client({
   endpoint: process.env.MINIO_ENDPOINT,
   region: "us-east-1", 
-  forcePathStyle: true, // Forces path routing (https://pool.ackteams.com/ack-file-pool)
+  forcePathStyle: true, 
   credentials: {
     accessKeyId: process.env.MINIO_ACCESS_KEY,
     secretAccessKey: process.env.MINIO_SECRET_KEY,
