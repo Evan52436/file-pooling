@@ -186,13 +186,13 @@ export default function DriveDashboard() {
       <div className="max-w-4xl mx-auto space-y-8 mt-12 relative">
         
         <header className="border-b border-slate-200 pb-6">
-          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Object Storage</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Storage System</h1>
         </header>
 
         <section className="bg-white shadow-sm border border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all hover:border-[#9cb4d4]">
           {isUploading ? (
             <div className="w-full space-y-4 text-center py-4">
-              <span className="text-sm font-bold text-[#6a87aa]">Streaming Data Payload... {uploadProgress}%</span>
+              <span className="text-sm font-bold text-[#6a87aa]">Uploading Your Files... {uploadProgress}%</span>
               <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
                 <div 
                   className="bg-[#9cb4d4] h-full rounded-full transition-all duration-300 ease-out" 
@@ -202,8 +202,8 @@ export default function DriveDashboard() {
             </div>
           ) : (
             <label className="cursor-pointer text-center p-6 w-full">
-              <span className="text-slate-800 block text-xl font-bold mb-2">Select File to Upload</span>
-              <span className="text-slate-500 text-sm block">Payload bypasses serverless functions and streams direct to disk</span>
+              <span className="text-slate-800 block text-xl font-bold mb-2">Click Here to Start Uploading</span>
+              <span className="text-slate-500 text-sm block">Upload this file here. currently, filesize should not exceed 100MB (Megabytes)</span>
               <input type="file" className="hidden" onChange={handleFileSelection} />
             </label>
           )}
