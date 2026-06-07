@@ -12,10 +12,12 @@ interface FileRecord {
   created_at: string;
 }
 
+// Added 'previewable' flag to the state interface
 interface PreviewState {
   url: string;
   type: string;
   name: string;
+  previewable: boolean;
 }
 
 export default function DriveDashboard() {
@@ -23,7 +25,6 @@ export default function DriveDashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   
-  // New state to control the in-app preview modal
   const [previewData, setPreviewData] = useState<PreviewState | null>(null);
 
   useEffect(() => {
@@ -97,8 +98,28 @@ export default function DriveDashboard() {
     }
   };
 
-  // 1. The Row Click (In-App Modal Preview)
+  // 1. The Row Click (Pre-flight Validation added)
   const handlePreviewRowClick = async (file: FileRecord) => {
+    // Check if the browser can actually render this file type
+    const isPreviewable = 
+      file.mime_type.startsWith('image/') ||
+      file.mime_type.startsWith('audio/') ||
+      file.mime_type.startsWith('video/') ||
+      file.mime_type === 'application/pdf' ||
+      file.mime_type.startsWith('text/');
+
+    // If it's a zip/rar/binary, skip the server fetch entirely and just show the fallback UI
+    if (!isPreviewable) {
+      setPreviewData({
+        url: "",
+        type: file.mime_type,
+        name: file.name,
+        previewable: false
+      });
+      return;
+    }
+
+    // Only fetch the S3 URL if the file is actually previewable
     try {
       const res = await fetch("/api/download", {
         method: "POST",
@@ -109,11 +130,11 @@ export default function DriveDashboard() {
       if (!res.ok) throw new Error("Failed to get preview link");
       const { downloadUrl } = await res.json();
       
-      // Instead of opening a tab, we set the state to trigger our beautiful UI modal
       setPreviewData({
         url: downloadUrl,
         type: file.mime_type,
-        name: file.name
+        name: file.name,
+        previewable: true
       });
     } catch (error) {
       console.error("Preview failed:", error);
@@ -121,9 +142,8 @@ export default function DriveDashboard() {
     }
   };
 
- // 2. The Download Click (Direct Intercept Hack)
   const handleDownloadAction = async (e: React.MouseEvent, storageKey: string, filename: string) => {
-    e.stopPropagation(); // Stops the preview modal from opening
+    e.stopPropagation(); 
 
     try {
       const res = await fetch("/api/download", {
@@ -135,8 +155,6 @@ export default function DriveDashboard() {
       if (!res.ok) throw new Error("Failed to get download link");
       const { downloadUrl } = await res.json();
       
-      // Because the backend now perfectly formats the Content-Disposition header,
-      // window.location.assign will trigger a silent download without leaving the page.
       window.location.assign(downloadUrl);
     } catch (error) {
       console.error("Download failed:", error);
@@ -241,13 +259,12 @@ export default function DriveDashboard() {
       {previewData && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 sm:p-8 transition-opacity"
-          onClick={() => setPreviewData(null)} // Clicking the dark background closes it
+          onClick={() => setPreviewData(null)}
         >
           <div 
             className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()} // Prevents clicks inside the modal from closing it
+            onClick={(e) => e.stopPropagation()} 
           >
-            {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
               <h3 className="font-mono font-bold text-slate-800 truncate pr-4">{previewData.name}</h3>
               <button 
@@ -258,16 +275,25 @@ export default function DriveDashboard() {
               </button>
             </div>
 
-            {/* Modal Content / Rendering Engine */}
             <div className="flex-1 bg-[#f8fafc] overflow-auto flex items-center justify-center p-4">
-              {previewData.type.startsWith('image/') ? (
+              {/* Fallback UI for Zips/Rars/Binaries */}
+              {!previewData.previewable ? (
+                <div className="text-center space-y-4">
+                  <div className="w-20 h-20 bg-slate-200 rounded-2xl mx-auto flex items-center justify-center shadow-sm border border-slate-300">
+                    <span className="text-3xl" aria-hidden="true">📄</span>
+                  </div>
+                  <h4 className="text-xl font-extrabold text-slate-800">Preview is not available</h4>
+                  <p className="text-sm text-slate-500 max-w-sm mx-auto">
+                    The browser cannot render <span className="font-mono bg-slate-100 px-1 rounded">{previewData.type || 'this type of'}</span> files inline. Please use the download button on the main dashboard to access this file.
+                  </p>
+                </div>
+              ) : previewData.type.startsWith('image/') ? (
                 <img src={previewData.url} alt={previewData.name} className="max-w-full max-h-full object-contain rounded-md shadow-sm" />
               ) : previewData.type.startsWith('audio/') ? (
                 <audio src={previewData.url} controls className="w-full max-w-md" />
               ) : previewData.type.startsWith('video/') ? (
                 <video src={previewData.url} controls className="max-w-full max-h-full rounded-md shadow-sm" />
               ) : (
-                // Fallback for PDFs, text files, and documents
                 <iframe src={previewData.url} className="w-full h-full border-0 bg-white rounded-md shadow-sm" title="Document Preview" />
               )}
             </div>
