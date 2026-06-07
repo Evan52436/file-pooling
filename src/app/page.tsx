@@ -43,7 +43,7 @@ export default function DriveDashboard() {
       setIsUploading(true);
       setUploadProgress(10);
 
-      // STAGE 1: Handshake requesting temporary upload permission ticket from Vercel
+      // STAGE 1: Handshake requesting temporary upload permission ticket from Vercel (/api/upload)
       const handshakeResponse = await fetch("/api/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,7 +67,7 @@ export default function DriveDashboard() {
       if (!uploadResponse.ok) throw new Error("Binary transfer to NAS failed");
       setUploadProgress(70);
 
-      // STAGE 3: Commit the metadata entry into the remote Supabase ledger
+      // STAGE 3: Commit the metadata entry into the remote Supabase ledger (/api/files)
       const metadataResponse = await fetch("/api/files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -96,29 +96,52 @@ export default function DriveDashboard() {
     }
   };
 
+  const handleDownload = async (storageKey: string) => {
+    try {
+      const res = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storageKey }),
+      });
+
+      if (!res.ok) throw new Error("Failed to get download link");
+      
+      const { downloadUrl } = await res.json();
+      
+      // Force the browser to securely open/download the file from MinIO
+      window.open(downloadUrl, "_blank");
+    } catch (error) {
+      console.error("Download failed:", error);
+      alert("Failed to securely fetch the file.");
+    }
+  };
+
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-8 font-sans">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <main className="min-h-screen bg-[#f0f4f8] text-slate-900 p-8 font-sans selection:bg-[#9cb4d4] selection:text-white">
+      <div className="max-w-4xl mx-auto space-y-8 mt-12">
         
         {/* Header Dashboard Status */}
-        <header className="border-b border-slate-800 pb-6">
-          <h1 className="text-3xl font-extrabold tracking-tight">Decoupled Object Storage</h1>
-          <p className="text-slate-400 text-sm mt-1">Vercel Pipeline ⚡ Cloudflare Tunnel 🕳️ Home Server NAS</p>
+        <header className="border-b border-slate-200 pb-6">
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Object Storage</h1>
+          <p className="text-[#7c93af] font-medium text-sm mt-2">Vercel Pipeline ⚡ Cloudflare Tunnel 🕳️ Home Server NAS</p>
         </header>
 
         {/* Upload Control Center */}
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden">
+        <section className="bg-white shadow-sm border border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all hover:border-[#9cb4d4]">
           {isUploading ? (
             <div className="w-full space-y-4 text-center py-4">
-              <span className="text-sm font-semibold text-emerald-400">Streaming Data Payload... {uploadProgress}%</span>
-              <div className="w-full bg-slate-800 rounded-full h-2">
-                <div className="bg-emerald-500 h-2 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+              <span className="text-sm font-bold text-[#6a87aa]">Streaming Data Payload... {uploadProgress}%</span>
+              <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                <div 
+                  className="bg-[#9cb4d4] h-full rounded-full transition-all duration-300 ease-out" 
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
               </div>
             </div>
           ) : (
-            <label className="cursor-pointer text-center p-4 w-full">
-              <span className="text-slate-300 block text-lg font-medium mb-1">Select File to Upload</span>
-              <span className="text-slate-500 text-xs block">Payload bypasses serverless functions and streams direct to disk</span>
+            <label className="cursor-pointer text-center p-6 w-full">
+              <span className="text-slate-800 block text-xl font-bold mb-2">Select File to Upload</span>
+              <span className="text-slate-500 text-sm block">Payload bypasses serverless functions and streams direct to disk</span>
               <input type="file" className="hidden" onChange={handleFileSelection} />
             </label>
           )}
@@ -126,23 +149,35 @@ export default function DriveDashboard() {
 
         {/* Storage Drive Ledger Display */}
         <section className="space-y-4">
-          <h2 className="text-xl font-bold tracking-tight text-slate-300">Storage Node Matrix</h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Storage Node Matrix</h2>
+          <div className="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden">
             {files.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 text-sm">No metadata tracks verified in Supabase ledger index.</div>
+              <div className="p-12 text-center text-slate-400 text-sm font-medium">
+                No metadata tracks verified in Supabase ledger index.
+              </div>
             ) : (
-              <ul className="divide-y divide-slate-800">
+              <ul className="divide-y divide-slate-100">
                 {files.map((file) => (
-                  <li key={file.id} className="p-4 flex items-center justify-between text-sm hover:bg-slate-850/50 transition">
-                    <div className="space-y-1 max-w-[70%]">
-                      <p className="font-mono font-medium truncate text-slate-200">{file.name}</p>
-                      <p className="text-xs text-slate-500 font-sans">
+                  <li key={file.id} className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200">
+                    <div className="space-y-1 max-w-[55%]">
+                      <p className="font-mono font-bold text-base truncate text-slate-800">{file.name}</p>
+                      <p className="text-xs text-slate-500 font-medium">
                         {(file.size / 1024 / 1024).toFixed(2)} MB • {file.mime_type}
                       </p>
                     </div>
-                    <span className="text-xs font-mono bg-slate-800 px-2.5 py-1 rounded border border-slate-700 text-slate-400 select-all truncate max-w-[200px]">
-                      {file.storage_key}
-                    </span>
+                    
+                    <div className="flex items-center gap-4">
+                      <span className="text-xs font-mono bg-slate-100 px-3 py-1.5 rounded-md border border-slate-200 text-slate-500 select-all truncate max-w-[150px]" title={file.storage_key}>
+                        {file.storage_key.split('/').pop()} {/* Only shows the UUID file name for cleaner UI */}
+                      </span>
+                      
+                      <button 
+                        onClick={() => handleDownload(file.storage_key)}
+                        className="bg-[#9cb4d4] hover:bg-[#86a1c4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
+                      >
+                        Download
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
