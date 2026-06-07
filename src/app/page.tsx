@@ -203,7 +203,7 @@ export default function DriveDashboard() {
           ) : (
             <label className="cursor-pointer text-center p-6 w-full">
               <span className="text-slate-800 block text-xl font-bold mb-2">Click Here to Start Uploading</span>
-              <span className="text-slate-500 text-sm block">Upload this file here. currently, filesize should not exceed 100MB (Megabytes)</span>
+              <span className="text-slate-500 text-sm block">Upload this file here. Currently, filesize is limited to 100MB (Megabytes)</span>
               <input type="file" className="hidden" onChange={handleFileSelection} />
             </label>
           )}
