@@ -12,10 +12,19 @@ interface FileRecord {
   created_at: string;
 }
 
+interface PreviewState {
+  url: string;
+  type: string;
+  name: string;
+}
+
 export default function DriveDashboard() {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  
+  // New state to control the in-app preview modal
+  const [previewData, setPreviewData] = useState<PreviewState | null>(null);
 
   useEffect(() => {
     fetchFiles();
@@ -47,7 +56,7 @@ export default function DriveDashboard() {
         body: JSON.stringify({ filename: selectedFile.name, contentType: selectedFile.type }),
       });
 
-      if (!handshakeResponse.ok) throw new Error("Handshake authorization failed");
+      if (!handshakeResponse.ok) throw new Error("Handshake failed");
       const { uploadUrl, storageKey } = await handshakeResponse.json();
       setUploadProgress(40);
 
@@ -57,7 +66,7 @@ export default function DriveDashboard() {
         body: selectedFile,
       });
 
-      if (!uploadResponse.ok) throw new Error("Binary transfer to NAS failed");
+      if (!uploadResponse.ok) throw new Error("Transfer failed");
       setUploadProgress(70);
 
       const metadataResponse = await fetch("/api/files", {
@@ -71,7 +80,7 @@ export default function DriveDashboard() {
         }),
       });
 
-      if (!metadataResponse.ok) throw new Error("Ledger recording failed");
+      if (!metadataResponse.ok) throw new Error("Ledger failed");
       
       setUploadProgress(100);
       setTimeout(() => {
@@ -82,43 +91,39 @@ export default function DriveDashboard() {
 
     } catch (error) {
       console.error("Pipeline failure:", error);
-      alert("Upload pipeline crashed. Check console.");
+      alert("Upload crashed. Check console.");
       setIsUploading(false);
       setUploadProgress(0);
     }
   };
 
-  // 1. The Row Click (Preview Action)
-  const handlePreviewRowClick = async (storageKey: string) => {
-    // Open a blank tab instantly to bypass pop-up blockers
-    const previewTab = window.open('about:blank', '_blank');
-    if (!previewTab) {
-      alert("Please allow pop-ups to preview files.");
-      return;
-    }
-
+  // 1. The Row Click (In-App Modal Preview)
+  const handlePreviewRowClick = async (file: FileRecord) => {
     try {
       const res = await fetch("/api/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storageKey, action: "preview" }),
+        body: JSON.stringify({ storageKey: file.storage_key, action: "preview" }),
       });
 
       if (!res.ok) throw new Error("Failed to get preview link");
       const { downloadUrl } = await res.json();
       
-      // Redirect the blank tab to the actual file
-      previewTab.location.href = downloadUrl;
+      // Instead of opening a tab, we set the state to trigger our beautiful UI modal
+      setPreviewData({
+        url: downloadUrl,
+        type: file.mime_type,
+        name: file.name
+      });
     } catch (error) {
       console.error("Preview failed:", error);
-      previewTab.close();
-      alert("Failed to preview the file.");
+      alert("Failed to load preview.");
     }
   };
 
-  // 2. The Specific Button Click (Download Action)
+  // 2. The Download Click (Invisible Link Hack)
   const handleDownloadAction = async (e: React.MouseEvent, storageKey: string, filename: string) => {
-    e.stopPropagation(); // Stops the row's preview click from firing
+    e.stopPropagation(); // Stops the preview modal from opening
 
     try {
       const res = await fetch("/api/download", {
@@ -130,17 +135,21 @@ export default function DriveDashboard() {
       if (!res.ok) throw new Error("Failed to get download link");
       const { downloadUrl } = await res.json();
       
-      // Force background download
-      window.location.href = downloadUrl;
+      // The React Invisible Link Trick: Bypasses pop-up blockers by simulating a real DOM click
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } catch (error) {
       console.error("Download failed:", error);
       alert("Failed to download the file.");
     }
   };
 
-  // 3. The Specific Button Click (Delete Action)
   const handleDeleteAction = async (e: React.MouseEvent, id: string, storageKey: string) => {
-    e.stopPropagation(); // Stops the row's preview click from firing
+    e.stopPropagation(); 
     if (!window.confirm("Are you sure you want to permanently delete this file?")) return;
     
     try {
@@ -160,7 +169,7 @@ export default function DriveDashboard() {
 
   return (
     <main className="min-h-screen bg-[#f0f4f8] text-slate-900 p-8 font-sans selection:bg-[#9cb4d4] selection:text-white">
-      <div className="max-w-4xl mx-auto space-y-8 mt-12">
+      <div className="max-w-4xl mx-auto space-y-8 mt-12 relative">
         
         <header className="border-b border-slate-200 pb-6">
           <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Object Storage</h1>
@@ -198,7 +207,7 @@ export default function DriveDashboard() {
                 {files.map((file) => (
                   <li 
                     key={file.id} 
-                    onClick={() => handlePreviewRowClick(file.storage_key)}
+                    onClick={() => handlePreviewRowClick(file)}
                     className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
                     title="Click to Preview"
                   >
@@ -210,10 +219,6 @@ export default function DriveDashboard() {
                     </div>
                     
                     <div className="flex items-center gap-3">
-                      <span className="hidden sm:inline-block text-xs font-mono bg-slate-100 px-3 py-1.5 rounded-md border border-slate-200 text-slate-500 truncate max-w-[120px]" title={file.storage_key}>
-                        {file.storage_key.split('/').pop()}
-                      </span>
-                      
                       <button 
                         onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
                         className="bg-[#9cb4d4] hover:bg-[#86a1c4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
@@ -235,6 +240,44 @@ export default function DriveDashboard() {
           </div>
         </section>
       </div>
+
+      {/* --- IN-APP PREVIEW MODAL --- */}
+      {previewData && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 sm:p-8 transition-opacity"
+          onClick={() => setPreviewData(null)} // Clicking the dark background closes it
+        >
+          <div 
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()} // Prevents clicks inside the modal from closing it
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-mono font-bold text-slate-800 truncate pr-4">{previewData.name}</h3>
+              <button 
+                onClick={() => setPreviewData(null)}
+                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Modal Content / Rendering Engine */}
+            <div className="flex-1 bg-[#f8fafc] overflow-auto flex items-center justify-center p-4">
+              {previewData.type.startsWith('image/') ? (
+                <img src={previewData.url} alt={previewData.name} className="max-w-full max-h-full object-contain rounded-md shadow-sm" />
+              ) : previewData.type.startsWith('audio/') ? (
+                <audio src={previewData.url} controls className="w-full max-w-md" />
+              ) : previewData.type.startsWith('video/') ? (
+                <video src={previewData.url} controls className="max-w-full max-h-full rounded-md shadow-sm" />
+              ) : (
+                // Fallback for PDFs, text files, and documents
+                <iframe src={previewData.url} className="w-full h-full border-0 bg-white rounded-md shadow-sm" title="Document Preview" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
