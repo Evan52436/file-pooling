@@ -9,7 +9,7 @@ const supabaseUrl = process.env.DATABASE_URL ? "https://" + process.env.DATABASE
 // if you prefer using the standard client initialization.
 const supabase = createClient(supabaseUrl, "your-supabase-anon-key-here");
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     // Queries the database tracking table for records ordered by upload time
     const { data: files, error } = await supabase
