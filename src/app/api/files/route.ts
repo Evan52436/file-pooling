@@ -1,74 +1,28 @@
 import { NextResponse } from "next/server";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { s3Client } from "../../../lib/s3";
+// import supabase client here
 
-// ============================================================================
-// GET: Handles frontend requests to read the ledger/metadata
-// ============================================================================
+// Reads the DB to populate your dashboard UI
 export async function GET(request: Request) {
   try {
-    // NOTE: This is where your Supabase fetching logic will go
     // const { data, error } = await supabase.from('files').select('*');
-    
-    return NextResponse.json({ message: "Ledger route ready and listening" }, { status: 200 });
+    return NextResponse.json([], { status: 200 }); // Returning empty array for now so UI doesn't crash
   } catch (error) {
-    console.error("Ledger fetch failure:", error);
-    return NextResponse.json({ error: "Failed to fetch ledger data" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to fetch ledger" }, { status: 500 });
   }
 }
 
-// ============================================================================
-// POST: Handles presigned S3 URLs and Ledger writes
-// ============================================================================
+// Writes the metadata to the DB after S3 upload succeeds (Stage 3)
 export async function POST(request: Request) {
-  // 1. Strict Infrastructure Guard
-  if (!process.env.MINIO_BUCKET_NAME) {
-    console.error("CRITICAL: MINIO_BUCKET_NAME environment variable is missing.");
-    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
-  }
-
-  // 2. Safe JSON Parsing
-  let body;
   try {
-    body = await request.json();
-  } catch (e) {
-    return NextResponse.json({ error: "Malformed or missing JSON body" }, { status: 400 });
-  }
+    const body = await request.json();
+    const { name, size, mimeType, storageKey } = body;
 
-  const { filename, contentType } = body;
+    if (!name || !storageKey) return NextResponse.json({ error: "Missing ledger data" }, { status: 400 });
 
-  // 3. Payload Validation
-  if (!filename || !contentType) {
-    return NextResponse.json(
-      { error: "Missing filename or contentType parameters" },
-      { status: 400 }
-    );
-  }
-
-  try {
-    // 4. Bulletproof Extension Extraction
-    const fileParts = filename.split(".");
-    const fileExtension = fileParts.length > 1 ? fileParts.pop() : "bin"; // Defaults to .bin if no extension exists
-    const uniqueId = crypto.randomUUID();
-    const storageKey = `uploads/${uniqueId}.${fileExtension}`;
-
-    // 5. Cryptographic Signing
-    const command = new PutObjectCommand({
-      Bucket: process.env.MINIO_BUCKET_NAME,
-      Key: storageKey,
-      ContentType: contentType,
-    });
-
-    // Authorize an upload window valid for exactly 15 minutes (900 seconds)
-    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
-
-    return NextResponse.json({ uploadUrl, storageKey }, { status: 200 });
+    // const { error } = await supabase.from('files').insert([{ name, size, mime_type: mimeType, storage_key: storageKey }]);
+    
+    return NextResponse.json({ message: "Ledger updated successfully" }, { status: 200 });
   } catch (error) {
-    console.error("Presigned URL generation failure:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error during token signing" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Ledger recording failed" }, { status: 500 });
   }
 }

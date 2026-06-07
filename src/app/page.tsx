@@ -44,7 +44,7 @@ export default function DriveDashboard() {
       setUploadProgress(10);
 
       // STAGE 1: Handshake requesting temporary upload permission ticket from Vercel
-      const handshakeResponse = await fetch("/api/files", {
+      const handshakeResponse = await fetch("/api/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
