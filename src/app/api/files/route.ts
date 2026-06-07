@@ -1,21 +1,21 @@
+// File: src/app/api/files/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { s3Client } from "../../../lib/s3";
 
-// CRITICAL: Tells Vercel NEVER to statically cache this route during the build phase
 export const dynamic = 'force-dynamic'; 
 
-// Safely pull variables without crashing the compiler
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-// Only initialize if the keys actually exist to prevent build-time panics
 const supabase = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey) 
   : null;
 
+// READ: Fetch all files for the UI
 export async function GET(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
-  
   try {
     const { data, error } = await supabase.from("files").select("*").order("created_at", { ascending: false });
     if (error) throw error;
@@ -25,9 +25,9 @@ export async function GET(request: Request) {
   }
 }
 
+// CREATE: Write new file metadata to the ledger
 export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
-
   try {
     const body = await request.json();
     const { name, size, mimeType, storageKey } = body;
@@ -42,5 +42,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Ledger updated successfully" }, { status: 200 });
   } catch (error) {
     return NextResponse.json({ error: "Ledger recording failed" }, { status: 500 });
+  }
+}
+
+// DELETE: Erase from MinIO and remove from Ledger
+export async function DELETE(request: Request) {
+  if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
+  try {
+    const { id, storageKey } = await request.json();
+    
+    if (!id || !storageKey) return NextResponse.json({ error: "Missing deletion parameters" }, { status: 400 });
+
+    // 1. Erase the binary payload from MinIO
+    if (process.env.MINIO_BUCKET_NAME) {
+      const command = new DeleteObjectCommand({
+        Bucket: process.env.MINIO_BUCKET_NAME,
+        Key: storageKey,
+      });
+      // We use .catch so that if the file is already missing in MinIO (ghost file), it doesn't crash the Supabase cleanup
+      await s3Client.send(command).catch(err => console.warn("MinIO file already missing:", err));
+    }
+
+    // 2. Erase the metadata record from Supabase
+    const { error } = await supabase.from("files").delete().eq("id", id);
+    if (error) throw error;
+
+    return NextResponse.json({ message: "File obliterated from matrix" }, { status: 200 });
+  } catch (error) {
+    console.error("Deletion sequence failed:", error);
+    return NextResponse.json({ error: "Deletion failed" }, { status: 500 });
   }
 }
