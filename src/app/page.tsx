@@ -61,7 +61,7 @@ export default function DriveDashboard() {
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch("/api/files");
+      const res = await fetch("/api/files"); 
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
