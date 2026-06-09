@@ -27,10 +27,6 @@ export default function DriveDashboard() {
   
   const [previewData, setPreviewData] = useState<PreviewState | null>(null);
 
-  useEffect(() => {
-    fetchFiles();
-  }, []);
-
   const fetchFiles = async () => {
     try {
       const res = await fetch("/api/files");
@@ -43,6 +39,11 @@ export default function DriveDashboard() {
     }
   };
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchFiles();
+  }, []);
+
   const handleFileSelection = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
@@ -54,34 +55,109 @@ export default function DriveDashboard() {
       const handshakeResponse = await fetch("/api/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: selectedFile.name, contentType: selectedFile.type }),
-      });
-
-      if (!handshakeResponse.ok) throw new Error("Handshake failed");
-      const { uploadUrl, storageKey } = await handshakeResponse.json();
-      setUploadProgress(40);
-
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": selectedFile.type },
-        body: selectedFile,
-      });
-
-      if (!uploadResponse.ok) throw new Error("Transfer failed");
-      setUploadProgress(70);
-
-      const metadataResponse = await fetch("/api/files", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: selectedFile.name,
-          size: selectedFile.size,
-          mimeType: selectedFile.type,
-          storageKey: storageKey,
+        body: JSON.stringify({ 
+          filename: selectedFile.name, 
+          contentType: selectedFile.type,
+          fileSize: selectedFile.size 
         }),
       });
 
-      if (!metadataResponse.ok) throw new Error("Ledger failed");
+      if (!handshakeResponse.ok) throw new Error("Handshake failed");
+      const handshakeData = await handshakeResponse.json();
+      setUploadProgress(20);
+
+      if (handshakeData.uploadUrl) {
+        // STANDARD UPLOAD PATH
+        const uploadResponse = await fetch(handshakeData.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": selectedFile.type },
+          body: selectedFile,
+        });
+
+        if (!uploadResponse.ok) throw new Error("Transfer failed");
+        setUploadProgress(70);
+
+        const metadataResponse = await fetch("/api/files", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: selectedFile.name,
+            size: selectedFile.size,
+            mimeType: selectedFile.type,
+            storageKey: handshakeData.storageKey,
+          }),
+        });
+
+        if (!metadataResponse.ok) throw new Error("Ledger failed");
+
+      } else if (handshakeData.uploadId && handshakeData.partUrls) {
+        // MULTIPART UPLOAD PATH
+        const { uploadId, storageKey, partUrls, chunkSize } = handshakeData;
+        const parts = [];
+
+        try {
+          for (let i = 0; i < partUrls.length; i++) {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, selectedFile.size);
+            const chunk = selectedFile.slice(start, end);
+
+            const uploadResponse = await fetch(partUrls[i], {
+              method: "PUT",
+              body: chunk,
+            });
+
+            if (!uploadResponse.ok) throw new Error(`Chunk ${i + 1} upload failed`);
+
+            const eTag = uploadResponse.headers.get("ETag");
+            if (!eTag) {
+              console.warn("ETag missing in response. Ensure MinIO CORS ExposeHeaders includes 'ETag'");
+            }
+            parts.push({ PartNumber: i + 1, ETag: eTag || "" });
+
+            // Calculate progress (20% to 80%)
+            const progress = 20 + Math.round(((i + 1) / partUrls.length) * 60);
+            setUploadProgress(progress);
+          }
+
+          setUploadProgress(85);
+
+          const completeResponse = await fetch("/api/upload/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "complete",
+              uploadId,
+              storageKey,
+              parts,
+            }),
+          });
+
+          if (!completeResponse.ok) throw new Error("Multipart completion failed");
+          setUploadProgress(90);
+
+          const metadataResponse = await fetch("/api/files", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: selectedFile.name,
+              size: selectedFile.size,
+              mimeType: selectedFile.type,
+              storageKey,
+            }),
+          });
+
+          if (!metadataResponse.ok) throw new Error("Ledger failed");
+
+        } catch (err) {
+          console.error("Multipart failed, attempting abort...", err);
+          await fetch("/api/upload/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "abort", uploadId, storageKey }),
+          });
+          throw err;
+        }
+      }
       
       setUploadProgress(100);
       setTimeout(() => {
@@ -203,7 +279,7 @@ export default function DriveDashboard() {
           ) : (
             <label className="cursor-pointer text-center p-6 w-full">
               <span className="text-slate-800 block text-xl font-bold mb-2">Click Here to Start Uploading</span>
-              <span className="text-slate-500 text-sm block">Upload this file here. Currently, filesize is limited to 100MB (Megabytes)</span>
+              <span className="text-slate-500 text-sm block">Upload this file here. Supports large files beyond 100MB via chunking.</span>
               <input type="file" className="hidden" onChange={handleFileSelection} />
             </label>
           )}

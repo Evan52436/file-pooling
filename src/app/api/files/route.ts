@@ -14,13 +14,13 @@ const supabase = (supabaseUrl && supabaseKey)
   : null;
 
 // READ: Fetch all files for the UI
-export async function GET(request: Request) {
+export async function GET() {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
   try {
     const { data, error } = await supabase.from("files").select("*").order("created_at", { ascending: false });
     if (error) throw error;
     return NextResponse.json(data, { status: 200 });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Failed to fetch ledger" }, { status: 500 });
   }
 }
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     
     if (error) throw error;
     return NextResponse.json({ message: "Ledger updated successfully" }, { status: 200 });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Ledger recording failed" }, { status: 500 });
   }
 }
