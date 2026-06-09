@@ -1,6 +1,6 @@
 // File: src/app/api/download/route.ts
 import { NextResponse } from "next/server";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, GetObjectCommandInput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client } from "../../../lib/s3";
 
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing storage key" }, { status: 400 });
     }
 
-    const commandParams: any = {
+    const commandParams: GetObjectCommandInput = {
       Bucket: process.env.MINIO_BUCKET_NAME!,
       Key: storageKey,
     };

@@ -14,13 +14,13 @@ const supabase = (supabaseUrl && supabaseKey)
   : null;
 
 // READ: Fetch all files for the UI
-export async function GET(request: Request) {
+export async function GET() {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
   try {
     const { data, error } = await supabase.from("files").select("*").order("created_at", { ascending: false });
     if (error) throw error;
     return NextResponse.json(data, { status: 200 });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Failed to fetch ledger" }, { status: 500 });
   }
 }
@@ -30,17 +30,17 @@ export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
   try {
     const body = await request.json();
-    const { name, size, mimeType, storageKey } = body;
+    const { name, size, mimeType, storageKey, parentFolder } = body;
 
     if (!name || !storageKey) return NextResponse.json({ error: "Missing ledger data" }, { status: 400 });
 
     const { error } = await supabase.from("files").insert([
-      { name, size, mime_type: mimeType, storage_key: storageKey }
+      { name, size, mime_type: mimeType, storage_key: storageKey, parent_folder: parentFolder || "/" }
     ]);
     
     if (error) throw error;
     return NextResponse.json({ message: "Ledger updated successfully" }, { status: 200 });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Ledger recording failed" }, { status: 500 });
   }
 }
@@ -71,5 +71,22 @@ export async function DELETE(request: Request) {
   } catch (error) {
     console.error("Deletion sequence failed:", error);
     return NextResponse.json({ error: "Deletion failed" }, { status: 500 });
+  }
+}
+
+// UPDATE: Rename file or folder
+export async function PATCH(request: Request) {
+  if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
+  try {
+    const { id, newName } = await request.json();
+    if (!id || !newName) return NextResponse.json({ error: "Missing update parameters" }, { status: 400 });
+
+    const { error } = await supabase.from("files").update({ name: newName }).eq("id", id);
+    if (error) throw error;
+
+    return NextResponse.json({ message: "Rename successful" }, { status: 200 });
+  } catch (error) {
+    console.error("Rename failed:", error);
+    return NextResponse.json({ error: "Rename failed" }, { status: 500 });
   }
 }
