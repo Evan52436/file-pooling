@@ -22,7 +22,7 @@ export async function GET() {
     return NextResponse.json(data, { status: 200 });
   } catch {
     return NextResponse.json({ error: "Failed to fetch ledger" }, { status: 500 });
-  }
+  } 
 }
 
 // CREATE: Write new file metadata to the ledger
