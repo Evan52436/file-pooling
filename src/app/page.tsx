@@ -76,11 +76,7 @@ export default function DriveDashboard() {
     fetchFiles();
   }, []);
 
-  useEffect(() => {
-    const handleClickOutside = () => setOpenDropdownId(null);
-    document.addEventListener("click", handleClickOutside);
-    return () => document.removeEventListener("click", handleClickOutside);
-  }, []);
+
 
   const handleFileSelection = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -376,7 +372,7 @@ export default function DriveDashboard() {
                   setCurrentFolderId("/");
                 }
               }}
-              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 flex items-center gap-1 cursor-pointer"
+              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] active:bg-[#9cb4d4] active:text-white active:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 flex items-center gap-1 cursor-pointer"
             >
               ← Back
             </button>
@@ -408,7 +404,7 @@ export default function DriveDashboard() {
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">Storage Node Matrix</h2>
             <button
               onClick={handleAddFolder}
-              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] active:bg-[#9cb4d4] active:text-white active:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
             >
               Add Folder
             </button>
@@ -473,7 +469,7 @@ export default function DriveDashboard() {
                       className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
                       title={file.mime_type === 'application/x-directory' ? "Open Folder" : "Click to Preview"}
                     >
-                      <div className="space-y-1 max-w-[50%]">
+                      <div className="space-y-1 flex-1 min-w-0 pr-4">
                         <div className="flex items-center gap-2">
                           {file.mime_type === 'application/x-directory' ? <FolderIcon /> : <FileIcon />}
                           <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">
@@ -503,38 +499,41 @@ export default function DriveDashboard() {
                           </button>
                           
                           {openDropdownId === file.id && (
-                            <div 
-                              className="absolute right-0 top-full mt-2 w-40 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-slate-100 p-2 flex flex-col gap-1 z-10"
-                              onClick={(e) => e.stopPropagation()}
-                            >
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setOpenDropdownId(null); }} />
+                              <div 
+                                className="absolute right-0 top-full mt-2 w-40 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-slate-100 p-2 flex flex-col gap-1 z-20"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                               {file.mime_type !== 'application/x-directory' ? (
                                 <button
                                   onClick={(e) => { handleDownloadAction(e, file.storage_key, file.name); setOpenDropdownId(null); }}
-                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#f4f7fa] rounded-lg font-bold transition-colors cursor-pointer"
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
                                 >
                                   Download
                                 </button>
                               ) : (
                                 <button
                                   onClick={(e) => { handleFolderDownload(e, file.id, file.name); setOpenDropdownId(null); }}
-                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#f4f7fa] rounded-lg font-bold transition-colors cursor-pointer"
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
                                 >
                                   Download
                                 </button>
                               )}
                               <button
                                 onClick={(e) => { handleRenameAction(e, file.id, file.name); setOpenDropdownId(null); }}
-                                className="w-full text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-lg font-bold transition-colors cursor-pointer"
+                                className="w-full text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-500 hover:text-white active:bg-slate-500 active:text-white rounded-lg font-bold transition-colors cursor-pointer"
                               >
                                 Rename
                               </button>
                               <button
                                 onClick={(e) => { handleDeleteAction(e, file.id, file.storage_key, file.name); setOpenDropdownId(null); }}
-                                className="w-full text-left px-3 py-2 text-sm text-[#cf6d6d] hover:bg-[#fdf3f3] rounded-lg font-bold transition-colors cursor-pointer"
+                                className="w-full text-left px-3 py-2 text-sm text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white active:bg-[#cf6d6d] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
                               >
                                 Delete
                               </button>
                             </div>
+                            </>
                           )}
                         </div>
 
@@ -543,14 +542,14 @@ export default function DriveDashboard() {
                           {file.mime_type !== 'application/x-directory' ? (
                             <button
                               onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
-                              className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                              className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                             >
                               Download
                             </button>
                           ) : (
                             <button
                               onClick={(e) => handleFolderDownload(e, file.id, file.name)}
-                              className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                              className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                             >
                               Download
                             </button>
@@ -558,14 +557,14 @@ export default function DriveDashboard() {
 
                           <button
                             onClick={(e) => handleRenameAction(e, file.id, file.name)}
-                            className="bg-white border border-slate-400 text-slate-500 hover:bg-slate-500 hover:text-white hover:border-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                            className="bg-white border border-slate-400 text-slate-500 hover:!bg-slate-500 hover:!text-white hover:!border-slate-500 active:!bg-slate-500 active:!text-white active:!border-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                           >
                             Rename
                           </button>
 
                           <button
                             onClick={(e) => handleDeleteAction(e, file.id, file.storage_key, file.name)}
-                            className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white hover:border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                            className="bg-white border border-[#e29393] text-[#cf6d6d] hover:!bg-[#cf6d6d] hover:!text-white hover:!border-[#cf6d6d] active:!bg-[#cf6d6d] active:!text-white active:!border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                           >
                             Delete
                           </button>
