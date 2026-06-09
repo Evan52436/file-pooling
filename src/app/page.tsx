@@ -176,6 +176,7 @@ export default function DriveDashboard() {
 
   // 1. The Row Click (Pre-flight Validation added)
   const handlePreviewRowClick = async (file: FileRecord) => {
+    if (file.mime_type === 'application/x-directory') return;
     // Check if the browser can actually render this file type
     const isPreviewable = 
       file.mime_type.startsWith('image/') ||
@@ -257,6 +258,30 @@ export default function DriveDashboard() {
     }
   };
 
+  const handleAddFolder = async () => {
+    const folderName = prompt("Enter folder name:");
+    if (!folderName || !folderName.trim()) return;
+
+    try {
+      const res = await fetch("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: folderName.trim(),
+          size: 0,
+          mimeType: "application/x-directory",
+          storageKey: `folders/${crypto.randomUUID()}`,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed to create folder");
+      fetchFiles();
+    } catch (error) {
+      console.error("Failed to create folder:", error);
+      alert("Failed to create folder.");
+    }
+  };
+
   return (
     <main className="min-h-screen bg-[#f0f4f8] text-slate-900 p-8 font-sans selection:bg-[#9cb4d4] selection:text-white">
       <div className="max-w-4xl mx-auto space-y-8 mt-12 relative">
@@ -286,7 +311,15 @@ export default function DriveDashboard() {
         </section>
 
         <section className="space-y-4">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Storage Node Matrix</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">Storage Node Matrix</h2>
+            <button 
+              onClick={handleAddFolder}
+              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#f4f7fa] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
+            >
+              Add Folder
+            </button>
+          </div>
           <div className="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden">
             {files.length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-sm font-medium">
@@ -297,24 +330,36 @@ export default function DriveDashboard() {
                 {files.map((file) => (
                   <li 
                     key={file.id} 
-                    onClick={() => handlePreviewRowClick(file)}
-                    className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
-                    title="Click to Preview"
+                    onClick={() => {
+                      if (file.mime_type !== 'application/x-directory') {
+                        handlePreviewRowClick(file);
+                      }
+                    }}
+                    className={`p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 ${
+                      file.mime_type === 'application/x-directory' ? 'cursor-default' : 'cursor-pointer'
+                    } group`}
+                    title={file.mime_type === 'application/x-directory' ? undefined : "Click to Preview"}
                   >
                     <div className="space-y-1 max-w-[50%]">
-                      <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">{file.name}</p>
+                      <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">
+                        {file.mime_type === 'application/x-directory' ? '📁 ' : ''}{file.name}
+                      </p>
                       <p className="text-xs text-slate-500 font-medium">
-                        {(file.size / 1024 / 1024).toFixed(2)} MB • {file.mime_type}
+                        {file.mime_type === 'application/x-directory' 
+                          ? 'Folder' 
+                          : `${(file.size / 1024 / 1024).toFixed(2)} MB • ${file.mime_type}`}
                       </p>
                     </div>
                     
                     <div className="flex items-center gap-3">
-                      <button 
-                        onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
-                        className="bg-[#9cb4d4] hover:bg-[#86a1c4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
-                      >
-                        Download
-                      </button>
+                      {file.mime_type !== 'application/x-directory' && (
+                        <button 
+                          onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
+                          className="bg-[#9cb4d4] hover:bg-[#86a1c4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
+                        >
+                          Download
+                        </button>
+                      )}
 
                       <button 
                         onClick={(e) => handleDeleteAction(e, file.id, file.storage_key)}
