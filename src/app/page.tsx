@@ -9,6 +9,7 @@ interface FileRecord {
   size: number;
   mime_type: string;
   storage_key: string;
+  parent_folder: string;
   created_at: string;
 }
 
@@ -20,12 +21,43 @@ interface PreviewState {
   previewable: boolean;
 }
 
+const FolderIcon = () => (
+  <svg
+    className="w-5 h-5 text-[#9cb4d4] shrink-0"
+    fill="currentColor"
+    viewBox="0 0 20 20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+  </svg>
+);
+
+const FileIcon = () => (
+  <svg
+    className="w-5 h-5 text-slate-400 shrink-0"
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+  </svg>
+);
+
 export default function DriveDashboard() {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  
+
   const [previewData, setPreviewData] = useState<PreviewState | null>(null);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [currentFolderId, setCurrentFolderId] = useState<string>("/");
+
+  const [deleteItem, setDeleteItem] = useState<{ id: string, storageKey: string, name: string } | null>(null);
+  const [renameItem, setRenameItem] = useState<{ id: string, name: string } | null>(null);
+  const [newName, setNewName] = useState("");
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   const fetchFiles = async () => {
     try {
@@ -44,6 +76,12 @@ export default function DriveDashboard() {
     fetchFiles();
   }, []);
 
+  useEffect(() => {
+    const handleClickOutside = () => setOpenDropdownId(null);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, []);
+
   const handleFileSelection = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
@@ -55,10 +93,10 @@ export default function DriveDashboard() {
       const handshakeResponse = await fetch("/api/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          filename: selectedFile.name, 
+        body: JSON.stringify({
+          filename: selectedFile.name,
           contentType: selectedFile.type,
-          fileSize: selectedFile.size 
+          fileSize: selectedFile.size
         }),
       });
 
@@ -85,6 +123,7 @@ export default function DriveDashboard() {
             size: selectedFile.size,
             mimeType: selectedFile.type,
             storageKey: handshakeData.storageKey,
+            parentFolder: currentFolderId,
           }),
         });
 
@@ -143,6 +182,7 @@ export default function DriveDashboard() {
               size: selectedFile.size,
               mimeType: selectedFile.type,
               storageKey,
+              parentFolder: currentFolderId,
             }),
           });
 
@@ -158,12 +198,12 @@ export default function DriveDashboard() {
           throw err;
         }
       }
-      
+
       setUploadProgress(100);
       setTimeout(() => {
         setIsUploading(false);
         setUploadProgress(0);
-        fetchFiles(); 
+        fetchFiles();
       }, 800);
 
     } catch (error) {
@@ -178,7 +218,7 @@ export default function DriveDashboard() {
   const handlePreviewRowClick = async (file: FileRecord) => {
     if (file.mime_type === 'application/x-directory') return;
     // Check if the browser can actually render this file type
-    const isPreviewable = 
+    const isPreviewable =
       file.mime_type.startsWith('image/') ||
       file.mime_type.startsWith('audio/') ||
       file.mime_type.startsWith('video/') ||
@@ -206,7 +246,7 @@ export default function DriveDashboard() {
 
       if (!res.ok) throw new Error("Failed to get preview link");
       const { downloadUrl } = await res.json();
-      
+
       setPreviewData({
         url: downloadUrl,
         type: file.mime_type,
@@ -220,7 +260,7 @@ export default function DriveDashboard() {
   };
 
   const handleDownloadAction = async (e: React.MouseEvent, storageKey: string, filename: string) => {
-    e.stopPropagation(); 
+    e.stopPropagation();
 
     try {
       const res = await fetch("/api/download", {
@@ -231,7 +271,7 @@ export default function DriveDashboard() {
 
       if (!res.ok) throw new Error("Failed to get download link");
       const { downloadUrl } = await res.json();
-      
+
       window.location.assign(downloadUrl);
     } catch (error) {
       console.error("Download failed:", error);
@@ -239,18 +279,27 @@ export default function DriveDashboard() {
     }
   };
 
-  const handleDeleteAction = async (e: React.MouseEvent, id: string, storageKey: string) => {
-    e.stopPropagation(); 
-    if (!window.confirm("Are you sure you want to permanently delete this file?")) return;
-    
+  const handleFolderDownload = (e: React.MouseEvent, folderId: string, folderName: string) => {
+    e.stopPropagation();
+    window.location.assign(`/api/download/folder?id=${folderId}&name=${encodeURIComponent(folderName)}`);
+  };
+
+  const handleDeleteAction = (e: React.MouseEvent, id: string, storageKey: string, name: string) => {
+    e.stopPropagation();
+    setDeleteItem({ id, storageKey, name });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteItem) return;
     try {
       const res = await fetch("/api/files", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, storageKey }),
+        body: JSON.stringify({ id: deleteItem.id, storageKey: deleteItem.storageKey }),
       });
 
       if (!res.ok) throw new Error("Deletion failed");
+      setDeleteItem(null);
       fetchFiles();
     } catch (error) {
       console.error("Delete failed:", error);
@@ -258,8 +307,35 @@ export default function DriveDashboard() {
     }
   };
 
-  const handleAddFolder = async () => {
-    const folderName = prompt("Enter folder name:");
+  const handleRenameAction = (e: React.MouseEvent, id: string, name: string) => {
+    e.stopPropagation();
+    setRenameItem({ id, name });
+    setNewName(name);
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!renameItem || !newName || !newName.trim() || newName.trim() === renameItem.name) return;
+    try {
+      const res = await fetch("/api/files", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: renameItem.id, newName: newName.trim() }),
+      });
+      if (!res.ok) throw new Error("Rename failed");
+      setRenameItem(null);
+      fetchFiles();
+    } catch (error) {
+      console.error("Rename failed:", error);
+      alert("Failed to rename.");
+    }
+  };
+
+  const handleAddFolder = () => {
+    setFolderName("");
+    setShowFolderModal(true);
+  };
+
+  const handleFolderSubmit = async () => {
     if (!folderName || !folderName.trim()) return;
 
     try {
@@ -271,10 +347,12 @@ export default function DriveDashboard() {
           size: 0,
           mimeType: "application/x-directory",
           storageKey: `folders/${crypto.randomUUID()}`,
+          parentFolder: currentFolderId,
         }),
       });
 
       if (!res.ok) throw new Error("Failed to create folder");
+      setShowFolderModal(false);
       fetchFiles();
     } catch (error) {
       console.error("Failed to create folder:", error);
@@ -285,9 +363,24 @@ export default function DriveDashboard() {
   return (
     <main className="min-h-screen bg-[#f0f4f8] text-slate-900 p-8 font-sans selection:bg-[#9cb4d4] selection:text-white">
       <div className="max-w-4xl mx-auto space-y-8 mt-12 relative">
-        
-        <header className="border-b border-slate-200 pb-6">
+
+        <header className="border-b border-slate-200 pb-6 flex items-center justify-between">
           <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Storage System</h1>
+          {currentFolderId !== "/" && (
+            <button 
+              onClick={() => {
+                const folder = files.find(f => f.id === currentFolderId);
+                if (folder) {
+                  setCurrentFolderId(folder.parent_folder);
+                } else {
+                  setCurrentFolderId("/");
+                }
+              }}
+              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 flex items-center gap-1 cursor-pointer"
+            >
+              ← Back
+            </button>
+          )}
         </header>
 
         <section className="bg-white shadow-sm border border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all hover:border-[#9cb4d4]">
@@ -295,8 +388,8 @@ export default function DriveDashboard() {
             <div className="w-full space-y-4 text-center py-4">
               <span className="text-sm font-bold text-[#6a87aa]">Uploading Your Files... {uploadProgress}%</span>
               <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                <div 
-                  className="bg-[#9cb4d4] h-full rounded-full transition-all duration-300 ease-out" 
+                <div
+                  className="bg-[#9cb4d4] h-full rounded-full transition-all duration-300 ease-out"
                   style={{ width: `${uploadProgress}%` }}
                 ></div>
               </div>
@@ -313,63 +406,173 @@ export default function DriveDashboard() {
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">Storage Node Matrix</h2>
-            <button 
+            <button
               onClick={handleAddFolder}
-              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#f4f7fa] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
+              className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
             >
               Add Folder
             </button>
           </div>
+
+          {currentFolderId !== "/" && (
+            <div className="flex items-center gap-2 text-sm text-[#6a87aa] font-medium font-mono pb-2">
+              <span
+                className="hover:underline cursor-pointer"
+                onClick={() => setCurrentFolderId("/")}
+              >
+                root
+              </span>
+              {(() => {
+                const path = [];
+                let tempId: string | null = currentFolderId;
+                while (tempId && tempId !== "/") {
+                  const folder = files.find(f => f.id === tempId);
+                  if (folder) {
+                    path.unshift({ id: folder.id, name: folder.name });
+                    tempId = folder.parent_folder;
+                  } else {
+                    break;
+                  }
+                }
+                return path.map((crumb) => (
+                  <span key={crumb.id} className="flex items-center gap-2">
+                    <span className="text-slate-300">/</span>
+                    <span
+                      className="hover:underline cursor-pointer font-bold"
+                      onClick={() => setCurrentFolderId(crumb.id)}
+                    >
+                      {crumb.name}
+                    </span>
+                  </span>
+                ));
+              })()}
+            </div>
+          )}
+
           <div className="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden">
-            {files.length === 0 ? (
+            {files.filter(f => f.parent_folder === currentFolderId).length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-sm font-medium">
-                No metadata tracks verified in Supabase ledger index.
+                {currentFolderId === "/"
+                  ? "No metadata tracks verified in Supabase ledger index."
+                  : "This folder is empty."}
               </div>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {files.map((file) => (
-                  <li 
-                    key={file.id} 
-                    onClick={() => {
-                      if (file.mime_type !== 'application/x-directory') {
-                        handlePreviewRowClick(file);
-                      }
-                    }}
-                    className={`p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 ${
-                      file.mime_type === 'application/x-directory' ? 'cursor-default' : 'cursor-pointer'
-                    } group`}
-                    title={file.mime_type === 'application/x-directory' ? undefined : "Click to Preview"}
-                  >
-                    <div className="space-y-1 max-w-[50%]">
-                      <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">
-                        {file.mime_type === 'application/x-directory' ? '📁 ' : ''}{file.name}
-                      </p>
-                      <p className="text-xs text-slate-500 font-medium">
-                        {file.mime_type === 'application/x-directory' 
-                          ? 'Folder' 
-                          : `${(file.size / 1024 / 1024).toFixed(2)} MB • ${file.mime_type}`}
-                      </p>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                      {file.mime_type !== 'application/x-directory' && (
-                        <button 
-                          onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
-                          className="bg-[#9cb4d4] hover:bg-[#86a1c4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
-                        >
-                          Download
-                        </button>
-                      )}
+                {files
+                  .filter((file) => file.parent_folder === currentFolderId)
+                  .map((file) => (
+                    <li
+                      key={file.id}
+                      onClick={() => {
+                        if (file.mime_type === 'application/x-directory') {
+                          setCurrentFolderId(file.id);
+                        } else {
+                          handlePreviewRowClick(file);
+                        }
+                      }}
+                      className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
+                      title={file.mime_type === 'application/x-directory' ? "Open Folder" : "Click to Preview"}
+                    >
+                      <div className="space-y-1 max-w-[50%]">
+                        <div className="flex items-center gap-2">
+                          {file.mime_type === 'application/x-directory' ? <FolderIcon /> : <FileIcon />}
+                          <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">
+                            {file.name}
+                          </p>
+                        </div>
+                        <p className="text-xs text-slate-500 font-medium ml-7">
+                          {file.mime_type === 'application/x-directory'
+                            ? 'Folder'
+                            : `${(file.size / 1024 / 1024).toFixed(2)} MB • ${file.mime_type}`}
+                        </p>
+                      </div>
 
-                      <button 
-                        onClick={(e) => handleDeleteAction(e, file.id, file.storage_key)}
-                        className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#fdf3f3] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                      <div className="relative flex items-center">
+                        {/* Mobile Kebab Menu */}
+                        <div className="md:hidden">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenDropdownId(openDropdownId === file.id ? null : file.id);
+                            }}
+                            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                          >
+                            <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M5 14a2 2 0 100-4 2 2 0 000 4zm7 0a2 2 0 100-4 2 2 0 000 4zm7 0a2 2 0 100-4 2 2 0 000 4z" />
+                            </svg>
+                          </button>
+                          
+                          {openDropdownId === file.id && (
+                            <div 
+                              className="absolute right-0 top-full mt-2 w-40 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-slate-100 p-2 flex flex-col gap-1 z-10"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {file.mime_type !== 'application/x-directory' ? (
+                                <button
+                                  onClick={(e) => { handleDownloadAction(e, file.storage_key, file.name); setOpenDropdownId(null); }}
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#f4f7fa] rounded-lg font-bold transition-colors cursor-pointer"
+                                >
+                                  Download
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={(e) => { handleFolderDownload(e, file.id, file.name); setOpenDropdownId(null); }}
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#f4f7fa] rounded-lg font-bold transition-colors cursor-pointer"
+                                >
+                                  Download
+                                </button>
+                              )}
+                              <button
+                                onClick={(e) => { handleRenameAction(e, file.id, file.name); setOpenDropdownId(null); }}
+                                className="w-full text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-lg font-bold transition-colors cursor-pointer"
+                              >
+                                Rename
+                              </button>
+                              <button
+                                onClick={(e) => { handleDeleteAction(e, file.id, file.storage_key, file.name); setOpenDropdownId(null); }}
+                                className="w-full text-left px-3 py-2 text-sm text-[#cf6d6d] hover:bg-[#fdf3f3] rounded-lg font-bold transition-colors cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Desktop Buttons */}
+                        <div className="hidden md:flex items-center gap-3">
+                          {file.mime_type !== 'application/x-directory' ? (
+                            <button
+                              onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
+                              className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                            >
+                              Download
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => handleFolderDownload(e, file.id, file.name)}
+                              className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                            >
+                              Download
+                            </button>
+                          )}
+
+                          <button
+                            onClick={(e) => handleRenameAction(e, file.id, file.name)}
+                            className="bg-white border border-slate-400 text-slate-500 hover:bg-slate-500 hover:text-white hover:border-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                          >
+                            Rename
+                          </button>
+
+                          <button
+                            onClick={(e) => handleDeleteAction(e, file.id, file.storage_key, file.name)}
+                            className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white hover:border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
               </ul>
             )}
           </div>
@@ -378,17 +581,17 @@ export default function DriveDashboard() {
 
       {/* --- IN-APP PREVIEW MODAL --- */}
       {previewData && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 sm:p-8 transition-opacity"
           onClick={() => setPreviewData(null)}
         >
-          <div 
+          <div
             className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()} 
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
               <h3 className="font-mono font-bold text-slate-800 truncate pr-4">{previewData.name}</h3>
-              <button 
+              <button
                 onClick={() => setPreviewData(null)}
                 className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors"
               >
@@ -417,6 +620,157 @@ export default function DriveDashboard() {
               ) : (
                 <iframe src={previewData.url} className="w-full h-full border-0 bg-white rounded-md shadow-sm" title="Document Preview" />
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- ADD FOLDER MODAL --- */}
+      {showFolderModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity"
+          onClick={() => setShowFolderModal(false)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-mono font-bold text-slate-800">Create New Folder</h3>
+              <button
+                onClick={() => setShowFolderModal(false)}
+                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <input
+                type="text"
+                placeholder="Folder name"
+                value={folderName}
+                onChange={(e) => setFolderName(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-mono text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleFolderSubmit();
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setShowFolderModal(false)}
+                  className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleFolderSubmit}
+                  className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- RENAME MODAL --- */}
+      {renameItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity"
+          onClick={() => setRenameItem(null)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-mono font-bold text-slate-800">Rename Item</h3>
+              <button
+                onClick={() => setRenameItem(null)}
+                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <input
+                type="text"
+                placeholder="New name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-mono text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleRenameSubmit();
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setRenameItem(null)}
+                  className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRenameSubmit}
+                  className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                >
+                  Rename
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- DELETE CONFIRM MODAL --- */}
+      {deleteItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity"
+          onClick={() => setDeleteItem(null)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-[#fdf3f3] bg-[#fff5f5]">
+              <h3 className="font-mono font-bold text-[#cf6d6d]">Confirm Deletion</h3>
+              <button
+                onClick={() => setDeleteItem(null)}
+                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-center">
+              <p className="text-sm text-slate-600 font-medium">
+                Are you sure you want to permanently delete <span className="font-bold text-slate-800">"{deleteItem.name}"</span>?
+              </p>
+              <p className="text-xs text-[#cf6d6d]">This action cannot be undone.</p>
+              
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  onClick={() => setDeleteItem(null)}
+                  className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white hover:border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         </div>
