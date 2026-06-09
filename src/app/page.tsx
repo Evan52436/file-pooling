@@ -1,7 +1,130 @@
 // File: src/app/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+
+// UUID to URL-friendly base64 encoding helpers
+function uuidToShortId(uuid: string): string {
+  const hex = uuid.replace(/-/g, "");
+  if (hex.length !== 32) return uuid;
+
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
+  
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function shortIdToUuid(shortId: string): string {
+  if (shortId.length !== 22) return shortId;
+
+  let base64 = shortId.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+
+  try {
+    const binary = atob(base64);
+    let hex = "";
+    for (let i = 0; i < binary.length; i++) {
+      const h = binary.charCodeAt(i).toString(16);
+      hex += h.length === 1 ? "0" + h : h;
+    }
+    if (hex.length !== 32) return shortId;
+
+    return `${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}`;
+  } catch (e) {
+    return shortId;
+  }
+}
+
+interface FilenameDisplayProps {
+  name: string;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  icon: React.ReactNode;
+}
+
+function FilenameDisplay({ name, isExpanded, onToggleExpand, icon }: FilenameDisplayProps) {
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  const checkOverflow = () => {
+    const el = textRef.current;
+    if (el) {
+      const originalStyle = el.style.cssText;
+      el.style.whiteSpace = "nowrap";
+      el.style.overflow = "hidden";
+      el.style.textOverflow = "ellipsis";
+      
+      const overflowing = el.scrollWidth > el.clientWidth;
+      el.style.cssText = originalStyle;
+      setIsOverflowing(overflowing);
+    }
+  };
+
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => {
+      checkOverflow();
+    });
+
+    window.addEventListener("resize", checkOverflow);
+    return () => {
+      cancelAnimationFrame(handle);
+      window.removeEventListener("resize", checkOverflow);
+    };
+  }, [name]);
+
+  useEffect(() => {
+    checkOverflow();
+  }, [isExpanded]);
+
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-1 shrink-0">
+        {icon}
+      </span>
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        <p
+          ref={textRef}
+          className={`font-mono font-bold text-base text-slate-800 group-hover:text-[#9cb4d4] transition-all duration-200 ${
+            isExpanded ? "whitespace-normal break-all" : "truncate"
+          }`}
+        >
+          {name}
+        </p>
+        {isOverflowing && (
+          <span 
+            className="p-1 hover:bg-slate-100 rounded-md transition-colors shrink-0 cursor-pointer select-none"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand();
+            }}
+            title="Click to toggle full name"
+          >
+            <svg
+              className={`w-3.5 h-3.5 text-slate-400 group-hover:text-[#9cb4d4] transition-transform duration-200 ${
+                isExpanded ? "rotate-180 text-[#9cb4d4]" : ""
+              }`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+            </svg>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface FileRecord {
   id: string;
@@ -58,6 +181,7 @@ export default function DriveDashboard() {
   const [renameItem, setRenameItem] = useState<{ id: string, name: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
 
   const fetchFiles = async () => {
     try {
@@ -74,7 +198,28 @@ export default function DriveDashboard() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchFiles();
+
+    // Read initial URL
+    const params = new URLSearchParams(window.location.search);
+    const folder = params.get("folder");
+    if (folder) {
+      setCurrentFolderId(shortIdToUuid(folder));
+    }
+
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      setCurrentFolderId(shortIdToUuid(params.get("folder") || "/"));
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+
+  const navigateToFolder = (id: string) => {
+    const newUrl = id === "/" ? window.location.pathname : `?folder=${uuidToShortId(id)}`;
+    window.history.pushState({}, "", newUrl);
+    setCurrentFolderId(id);
+  };
 
 
 
@@ -367,9 +512,9 @@ export default function DriveDashboard() {
               onClick={() => {
                 const folder = files.find(f => f.id === currentFolderId);
                 if (folder) {
-                  setCurrentFolderId(folder.parent_folder);
+                  navigateToFolder(folder.parent_folder);
                 } else {
-                  setCurrentFolderId("/");
+                  navigateToFolder("/");
                 }
               }}
               className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] active:bg-[#9cb4d4] active:text-white active:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 flex items-center gap-1 cursor-pointer"
@@ -414,7 +559,7 @@ export default function DriveDashboard() {
             <div className="flex items-center gap-2 text-sm text-[#6a87aa] font-medium font-mono pb-2">
               <span
                 className="hover:underline cursor-pointer"
-                onClick={() => setCurrentFolderId("/")}
+                onClick={() => navigateToFolder("/")}
               >
                 root
               </span>
@@ -435,7 +580,7 @@ export default function DriveDashboard() {
                     <span className="text-slate-300">/</span>
                     <span
                       className="hover:underline cursor-pointer font-bold"
-                      onClick={() => setCurrentFolderId(crumb.id)}
+                      onClick={() => navigateToFolder(crumb.id)}
                     >
                       {crumb.name}
                     </span>
@@ -461,7 +606,7 @@ export default function DriveDashboard() {
                       key={file.id}
                       onClick={() => {
                         if (file.mime_type === 'application/x-directory') {
-                          setCurrentFolderId(file.id);
+                          navigateToFolder(file.id);
                         } else {
                           handlePreviewRowClick(file);
                         }
@@ -469,13 +614,15 @@ export default function DriveDashboard() {
                       className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
                       title={file.mime_type === 'application/x-directory' ? "Open Folder" : "Click to Preview"}
                     >
-                      <div className="space-y-1 flex-1 min-w-0 pr-4">
-                        <div className="flex items-center gap-2">
-                          {file.mime_type === 'application/x-directory' ? <FolderIcon /> : <FileIcon />}
-                          <p className="font-mono font-bold text-base truncate text-slate-800 group-hover:text-[#9cb4d4] transition-colors">
-                            {file.name}
-                          </p>
-                        </div>
+                      <div className="space-y-1 flex-1 min-w-0 pr-6 md:pr-10">
+                        <FilenameDisplay
+                          name={file.name}
+                          isExpanded={!!expandedFiles[file.id]}
+                          onToggleExpand={() => {
+                            setExpandedFiles((prev) => ({ ...prev, [file.id]: !prev[file.id] }));
+                          }}
+                          icon={file.mime_type === 'application/x-directory' ? <FolderIcon /> : <FileIcon />}
+                        />
                         <p className="text-xs text-slate-500 font-medium ml-7">
                           {file.mime_type === 'application/x-directory'
                             ? 'Folder'
