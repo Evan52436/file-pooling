@@ -74,19 +74,23 @@ export async function DELETE(request: Request) {
   }
 }
 
-// UPDATE: Rename file or folder
+// UPDATE: Rename file or folder or set password
 export async function PATCH(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
   try {
-    const { id, newName } = await request.json();
-    if (!id || !newName) return NextResponse.json({ error: "Missing update parameters" }, { status: 400 });
+    const { id, newName, password } = await request.json();
+    if (!id || (!newName && password === undefined)) return NextResponse.json({ error: "Missing update parameters" }, { status: 400 });
 
-    const { error } = await supabase.from("files").update({ name: newName }).eq("id", id);
+    const updateData: any = {};
+    if (newName) updateData.name = newName;
+    if (password !== undefined) updateData.password = password;
+
+    const { error } = await supabase.from("files").update(updateData).eq("id", id);
     if (error) throw error;
 
-    return NextResponse.json({ message: "Rename successful" }, { status: 200 });
+    return NextResponse.json({ message: "Update successful" }, { status: 200 });
   } catch (error) {
-    console.error("Rename failed:", error);
-    return NextResponse.json({ error: "Rename failed" }, { status: 500 });
+    console.error("Update failed:", error);
+    return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 }
