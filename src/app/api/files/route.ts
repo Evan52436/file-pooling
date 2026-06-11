@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "../../../lib/s3";
+import { sha256 } from "../../../lib/hash";
 
 export const dynamic = 'force-dynamic'; 
 
@@ -83,7 +84,7 @@ export async function PATCH(request: Request) {
 
     const updateData: any = {};
     if (newName) updateData.name = newName;
-    if (password !== undefined) updateData.password = password;
+    if (password !== undefined) updateData.password = password ? await sha256(password) : "";
 
     const { error } = await supabase.from("files").update(updateData).eq("id", id);
     if (error) throw error;

@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { sha256 } from "../lib/hash";
 
 // UUID to URL-friendly base64 encoding helpers
 function uuidToShortId(uuid: string): string {
@@ -477,9 +478,10 @@ export default function DriveDashboard() {
     }
   };
 
-  const handleUnlockSubmit = () => {
+  const handleUnlockSubmit = async () => {
     if (!unlockItem) return;
-    if (passwordInput.trim() !== unlockItem.correctPassword) {
+    const hashedInput = await sha256(passwordInput.trim());
+    if (hashedInput !== unlockItem.correctPassword) {
       alert("Incorrect password");
       return;
     }
@@ -593,8 +595,8 @@ export default function DriveDashboard() {
         </header>
 
         <section 
-          className={`bg-white shadow-sm border rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all ${
-            isDragging ? 'border-[#9cb4d4] bg-[#f0f4f8] shadow-[0_0_15px_rgba(156,180,212,0.6)]' : 'border-slate-200 hover:border-[#9cb4d4]'
+          className={`bg-white shadow-sm border rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all duration-300 ${
+            isDragging ? 'border-[#9cb4d4] bg-[#e6eef5] shadow-[0_0_30px_rgba(156,180,212,0.95),_0_0_15px_rgba(156,180,212,0.6)] ring-4 ring-[#9cb4d4]/40 scale-[1.02]' : 'border-slate-200 hover:border-[#9cb4d4] hover:shadow-[0_0_15px_rgba(156,180,212,0.2)]'
           }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -613,7 +615,7 @@ export default function DriveDashboard() {
           ) : (
             <label className="cursor-pointer text-center p-6 w-full">
               <span className="text-slate-800 block text-xl font-bold mb-2">Click Here to Start Uploading</span>
-              <span className="text-slate-500 text-sm block">Upload this file here. Supports large files beyond 100MB via chunking.</span>
+              <span className="text-slate-500 text-sm block">Upload this file here. The maximum upload limit is 2GB.</span>
               <input type="file" className="hidden" onChange={handleFileSelection} />
             </label>
           )}

@@ -4,6 +4,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "../../../../lib/s3";
 import { ZipArchive } from "archiver";
 import { PassThrough } from "stream";
+import { sha256 } from "../../../../lib/hash";
 
 export const dynamic = 'force-dynamic';
 
@@ -41,8 +42,11 @@ export async function GET(request: Request) {
     const { data: targetFolder, error: targetFolderError } = await supabase.from("files").select("password").eq("id", folderId).single();
     if (targetFolderError) throw targetFolderError;
 
-    if (targetFolder.password && targetFolder.password !== providedPassword) {
-      return NextResponse.json({ error: "Unauthorized: Invalid password" }, { status: 401 });
+    if (targetFolder.password) {
+      const hashedProvided = await sha256(providedPassword);
+      if (targetFolder.password !== hashedProvided) {
+        return NextResponse.json({ error: "Unauthorized: Invalid password" }, { status: 401 });
+      }
     }
 
     // 2. Fetch all files to build the tree in memory (efficient enough for normal use cases)
