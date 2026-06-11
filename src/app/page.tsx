@@ -182,7 +182,6 @@ export default function DriveDashboard() {
   const [deleteItem, setDeleteItem] = useState<{ id: string, storageKey: string, name: string } | null>(null);
   const [renameItem, setRenameItem] = useState<{ id: string, name: string } | null>(null);
   const [newName, setNewName] = useState("");
-  const [lockItem, setLockItem] = useState<{ id: string, name: string } | null>(null);
   const [unlockItem, setUnlockItem] = useState<{ id: string, name: string, action: "open" | "download", correctPassword?: string } | null>(null);
   const [passwordInput, setPasswordInput] = useState("");
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -478,30 +477,6 @@ export default function DriveDashboard() {
     }
   };
 
-  const handleLockAction = (e: React.MouseEvent, id: string, name: string) => {
-    e.stopPropagation();
-    setLockItem({ id, name });
-    setPasswordInput("");
-  };
-
-  const handleLockSubmit = async () => {
-    if (!lockItem) return;
-    try {
-      const res = await fetch("/api/files", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: lockItem.id, password: passwordInput.trim() }),
-      });
-      if (!res.ok) throw new Error("Lock failed");
-      setLockItem(null);
-      setPasswordInput("");
-      fetchFiles();
-    } catch (error) {
-      console.error("Lock failed:", error);
-      alert("Failed to set password.");
-    }
-  };
-
   const handleUnlockSubmit = () => {
     if (!unlockItem) return;
     if (passwordInput.trim() !== unlockItem.correctPassword) {
@@ -760,20 +735,12 @@ export default function DriveDashboard() {
                                   Download
                                 </button>
                               ) : (
-                                <>
-                                  <button
-                                    onClick={(e) => { attemptDownloadFolder(e, file); setOpenDropdownId(null); }}
-                                    className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
-                                  >
-                                    Download
-                                  </button>
-                                  <button
-                                    onClick={(e) => { handleLockAction(e, file.id, file.name); setOpenDropdownId(null); }}
-                                    className="w-full text-left px-3 py-2 text-sm text-[#eab308] hover:bg-[#eab308] hover:text-white active:bg-[#eab308] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
-                                  >
-                                    {file.password ? "Change Password" : "Set Password"}
-                                  </button>
-                                </>
+                                <button
+                                  onClick={(e) => { attemptDownloadFolder(e, file); setOpenDropdownId(null); }}
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
+                                >
+                                  Download
+                                </button>
                               )}
                               <button
                                 onClick={(e) => { handleRenameAction(e, file.id, file.name); setOpenDropdownId(null); }}
@@ -802,20 +769,12 @@ export default function DriveDashboard() {
                               Download
                             </button>
                           ) : (
-                            <>
-                              <button
-                                onClick={(e) => attemptDownloadFolder(e, file)}
-                                className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
-                              >
-                                Download
-                              </button>
-                              <button
-                                onClick={(e) => handleLockAction(e, file.id, file.name)}
-                                className="bg-white border border-[#eab308] text-[#eab308] hover:!bg-[#eab308] hover:!text-white hover:!border-[#eab308] active:!bg-[#eab308] active:!text-white active:!border-[#eab308] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
-                              >
-                                {file.password ? "Change Password" : "Set Password"}
-                              </button>
-                            </>
+                            <button
+                              onClick={(e) => attemptDownloadFolder(e, file)}
+                              className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                            >
+                              Download
+                            </button>
                           )}
 
                           <button
@@ -1031,59 +990,6 @@ export default function DriveDashboard() {
                   className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white hover:border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                 >
                   Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- LOCK FOLDER MODAL --- */}
-      {lockItem && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity"
-          onClick={() => setLockItem(null)}
-        >
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
-              <h3 className="font-mono font-bold text-slate-800">Set Password for "{lockItem.name}"</h3>
-              <button
-                onClick={() => setLockItem(null)}
-                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <input
-                type="password"
-                placeholder="Enter new password (leave blank to remove)"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#eab308] font-mono text-sm"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    handleLockSubmit();
-                  }
-                }}
-              />
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  onClick={() => setLockItem(null)}
-                  className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleLockSubmit}
-                  className="bg-[#eab308] hover:bg-white hover:text-[#eab308] border border-[#eab308] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
-                >
-                  Save
                 </button>
               </div>
             </div>
