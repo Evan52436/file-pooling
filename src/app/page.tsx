@@ -51,9 +51,10 @@ interface FilenameDisplayProps {
   isExpanded: boolean;
   onToggleExpand: () => void;
   icon: React.ReactNode;
+  subtitle?: React.ReactNode;
 }
 
-function FilenameDisplay({ name, isExpanded, onToggleExpand, icon }: FilenameDisplayProps) {
+function FilenameDisplay({ name, isExpanded, onToggleExpand, icon, subtitle }: FilenameDisplayProps) {
   const textRef = useRef<HTMLParagraphElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
 
@@ -88,40 +89,43 @@ function FilenameDisplay({ name, isExpanded, onToggleExpand, icon }: FilenameDis
   }, [isExpanded]);
 
   return (
-    <div className="flex items-start gap-2">
-      <span className="mt-1 shrink-0">
+    <div className="flex items-center gap-3">
+      <span className="shrink-0 flex items-center justify-center">
         {icon}
       </span>
-      <div className="flex items-center gap-1.5 flex-1 min-w-0">
-        <p
-          ref={textRef}
-          className={`font-mono font-bold text-base text-slate-800 group-hover:text-[#9cb4d4] transition-all duration-200 ${
-            isExpanded ? "whitespace-normal break-all" : "truncate"
-          }`}
-        >
-          {name}
-        </p>
-        {isOverflowing && (
-          <span 
-            className="p-1 hover:bg-slate-100 rounded-md transition-colors shrink-0 cursor-pointer select-none"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleExpand();
-            }}
-            title="Click to toggle full name"
+      <div className="flex-1 min-w-0 flex flex-col justify-center">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p
+            ref={textRef}
+            className={`font-mono font-bold text-base text-slate-800 group-hover:text-[#9cb4d4] transition-all duration-200 ${
+              isExpanded ? "whitespace-normal break-all" : "truncate"
+            }`}
           >
-            <svg
-              className={`w-3.5 h-3.5 text-slate-400 group-hover:text-[#9cb4d4] transition-transform duration-200 ${
-                isExpanded ? "rotate-180 text-[#9cb4d4]" : ""
-              }`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            {name}
+          </p>
+          {isOverflowing && (
+            <span 
+              className="p-1 hover:bg-slate-100 rounded-md transition-colors shrink-0 cursor-pointer select-none"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleExpand();
+              }}
+              title="Click to toggle full name"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-            </svg>
-          </span>
-        )}
+              <svg
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-[#9cb4d4] transition-transform duration-200 ${
+                  isExpanded ? "rotate-180 text-[#9cb4d4]" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+              </svg>
+            </span>
+          )}
+        </div>
+        {subtitle}
       </div>
     </div>
   );
@@ -144,6 +148,15 @@ interface PreviewState {
   type: string;
   name: string;
   previewable: boolean;
+}
+
+interface PendingUpload {
+  id: string;
+  file: File;
+  customName: string;
+  uploaderName: string;
+  password?: string;
+  expiration: "1d" | "1w" | "2w" | "1m" | "2m" | "forever";
 }
 
 const FolderIcon = () => (
@@ -188,6 +201,33 @@ export default function DriveDashboard() {
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
 
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  const [showUploadConfigModal, setShowUploadConfigModal] = useState(false);
+  const [alertModal, setAlertModal] = useState<{ title: string; message: string; isError?: boolean } | null>(null);
+  const [renderTrigger, setRenderTrigger] = useState(0);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+
+  const listRef = useRef<HTMLDivElement>(null);
+  const [showScrollIndicator, setShowScrollIndicator] = useState(false);
+
+  const checkScrollable = () => {
+    const el = listRef.current;
+    if (el) {
+      const isScrollable = el.scrollHeight > el.clientHeight;
+      const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 15;
+      setShowScrollIndicator(isScrollable && !isAtBottom);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(checkScrollable, 100);
+    window.addEventListener("resize", checkScrollable);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", checkScrollable);
+    };
+  }, [files, currentFolderId, renderTrigger]);
+
   const fetchFiles = async () => {
     try {
       const res = await fetch("/api/files"); 
@@ -228,145 +268,182 @@ export default function DriveDashboard() {
 
 
 
-  const processFile = async (selectedFile: File) => {
+  const getExpirationDate = (exp: string) => {
+    if (exp === "forever") return null;
+    const date = new Date();
+    if (exp === "1d") date.setDate(date.getDate() + 1);
+    if (exp === "1w") date.setDate(date.getDate() + 7);
+    if (exp === "2w") date.setDate(date.getDate() + 14);
+    if (exp === "1m") date.setMonth(date.getMonth() + 1);
+    if (exp === "2m") date.setMonth(date.getMonth() + 2);
+    return date.toISOString();
+  };
+
+  const processSingleUpload = async (pu: PendingUpload, setProgress: (p: number) => void) => {
+    const selectedFile = pu.file;
     const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
     if (selectedFile.size > MAX_FILE_SIZE) {
-      alert("File size exceeds 2GB limit.");
-      return;
+      throw new Error(`File ${pu.customName} exceeds 2GB limit.`);
     }
 
-    try {
-      setIsUploading(true);
-      setUploadProgress(10);
+    setProgress(10);
+    const handshakeResponse = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: pu.customName,
+        contentType: selectedFile.type,
+        fileSize: selectedFile.size
+      }),
+    });
 
-      const handshakeResponse = await fetch("/api/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: selectedFile.name,
-          contentType: selectedFile.type,
-          fileSize: selectedFile.size
-        }),
+    if (!handshakeResponse.ok) throw new Error("Handshake failed");
+    const handshakeData = await handshakeResponse.json();
+    setProgress(20);
+
+    const metadataPayload: any = {
+      name: pu.customName,
+      size: selectedFile.size,
+      mimeType: selectedFile.type,
+      storageKey: handshakeData.storageKey || handshakeData.uploadId,
+      parentFolder: currentFolderId,
+      uploaderName: pu.uploaderName.trim(),
+      password: pu.password,
+      expiresAt: getExpirationDate(pu.expiration)
+    };
+
+    if (handshakeData.uploadUrl) {
+      // STANDARD UPLOAD PATH
+      const uploadResponse = await fetch(handshakeData.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": selectedFile.type },
+        body: selectedFile,
       });
 
-      if (!handshakeResponse.ok) throw new Error("Handshake failed");
-      const handshakeData = await handshakeResponse.json();
-      setUploadProgress(20);
+      if (!uploadResponse.ok) throw new Error("Transfer failed");
+      setProgress(70);
 
-      if (handshakeData.uploadUrl) {
-        // STANDARD UPLOAD PATH
-        const uploadResponse = await fetch(handshakeData.uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": selectedFile.type },
-          body: selectedFile,
-        });
+      metadataPayload.storageKey = handshakeData.storageKey;
+      const metadataResponse = await fetch("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(metadataPayload),
+      });
 
-        if (!uploadResponse.ok) throw new Error("Transfer failed");
-        setUploadProgress(70);
+      if (!metadataResponse.ok) throw new Error("Ledger failed");
 
-        const metadataResponse = await fetch("/api/files", {
+    } else if (handshakeData.uploadId && handshakeData.partUrls) {
+      // MULTIPART UPLOAD PATH
+      const { uploadId, storageKey, partUrls, chunkSize } = handshakeData;
+      const parts = [];
+
+      try {
+        for (let i = 0; i < partUrls.length; i++) {
+          const start = i * chunkSize;
+          const end = Math.min(start + chunkSize, selectedFile.size);
+          const chunk = selectedFile.slice(start, end);
+
+          const uploadResponse = await fetch(partUrls[i], {
+            method: "PUT",
+            body: chunk,
+          });
+
+          if (!uploadResponse.ok) throw new Error(`Chunk ${i + 1} upload failed`);
+
+          const eTag = uploadResponse.headers.get("ETag");
+          parts.push({ PartNumber: i + 1, ETag: eTag || "" });
+          setProgress(20 + Math.round(((i + 1) / partUrls.length) * 60));
+        }
+
+        setProgress(85);
+        const completeResponse = await fetch("/api/upload/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: selectedFile.name,
-            size: selectedFile.size,
-            mimeType: selectedFile.type,
-            storageKey: handshakeData.storageKey,
-            parentFolder: currentFolderId,
+            action: "complete",
+            uploadId,
+            storageKey,
+            parts,
           }),
+        });
+
+        if (!completeResponse.ok) throw new Error("Multipart completion failed");
+        setProgress(90);
+
+        metadataPayload.storageKey = storageKey;
+        const metadataResponse = await fetch("/api/files", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(metadataPayload),
         });
 
         if (!metadataResponse.ok) throw new Error("Ledger failed");
 
-      } else if (handshakeData.uploadId && handshakeData.partUrls) {
-        // MULTIPART UPLOAD PATH
-        const { uploadId, storageKey, partUrls, chunkSize } = handshakeData;
-        const parts = [];
-
-        try {
-          for (let i = 0; i < partUrls.length; i++) {
-            const start = i * chunkSize;
-            const end = Math.min(start + chunkSize, selectedFile.size);
-            const chunk = selectedFile.slice(start, end);
-
-            const uploadResponse = await fetch(partUrls[i], {
-              method: "PUT",
-              body: chunk,
-            });
-
-            if (!uploadResponse.ok) throw new Error(`Chunk ${i + 1} upload failed`);
-
-            const eTag = uploadResponse.headers.get("ETag");
-            if (!eTag) {
-              console.warn("ETag missing in response. Ensure MinIO CORS ExposeHeaders includes 'ETag'");
-            }
-            parts.push({ PartNumber: i + 1, ETag: eTag || "" });
-
-            // Calculate progress (20% to 80%)
-            const progress = 20 + Math.round(((i + 1) / partUrls.length) * 60);
-            setUploadProgress(progress);
-          }
-
-          setUploadProgress(85);
-
-          const completeResponse = await fetch("/api/upload/complete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "complete",
-              uploadId,
-              storageKey,
-              parts,
-            }),
-          });
-
-          if (!completeResponse.ok) throw new Error("Multipart completion failed");
-          setUploadProgress(90);
-
-          const metadataResponse = await fetch("/api/files", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: selectedFile.name,
-              size: selectedFile.size,
-              mimeType: selectedFile.type,
-              storageKey,
-              parentFolder: currentFolderId,
-            }),
-          });
-
-          if (!metadataResponse.ok) throw new Error("Ledger failed");
-
-        } catch (err) {
-          console.error("Multipart failed, attempting abort...", err);
-          await fetch("/api/upload/complete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "abort", uploadId, storageKey }),
-          });
-          throw err;
-        }
+      } catch (err) {
+        console.error("Multipart failed, attempting abort...", err);
+        await fetch("/api/upload/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "abort", uploadId, storageKey }),
+        });
+        throw err;
       }
-
-      setUploadProgress(100);
-      setTimeout(() => {
-        setIsUploading(false);
-        setUploadProgress(0);
-        fetchFiles();
-      }, 800);
-
-    } catch (error) {
-      console.error("Pipeline failure:", error);
-      alert("Upload crashed. Check console.");
-      setIsUploading(false);
-      setUploadProgress(0);
     }
+    setProgress(100);
+  };
+
+  const handleConfirmUploads = async () => {
+    // Validation
+    for (const pu of pendingUploads) {
+      if (!pu.uploaderName.trim()) {
+        setAlertModal({ title: "Validation Error", message: `Uploader name is required for "${pu.customName}".`, isError: true });
+        return;
+      }
+    }
+
+    setShowUploadConfigModal(false);
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    for (let i = 0; i < pendingUploads.length; i++) {
+      const pu = pendingUploads[i];
+      try {
+        await processSingleUpload(pu, (p) => {
+          const baseProgress = (i / pendingUploads.length) * 100;
+          const fileContrib = (p / 100) * (100 / pendingUploads.length);
+          setUploadProgress(Math.round(baseProgress + fileContrib));
+        });
+      } catch (error) {
+        console.error("Pipeline failure for", pu.customName, error);
+        setAlertModal({ 
+          title: "Upload Failed", 
+          message: error instanceof Error ? error.message : `Upload failed for "${pu.customName}".`, 
+          isError: true 
+        });
+      }
+    }
+
+    setIsUploading(false);
+    setUploadProgress(0);
+    setPendingUploads([]);
+    fetchFiles();
+  };
+
+  const startUploadConfig = (filesArray: File[]) => {
+    const newUploads = filesArray.map(f => ({
+      id: crypto.randomUUID(),
+      file: f,
+      customName: f.name,
+      uploaderName: "",
+      expiration: "2w" as const
+    }));
+    setPendingUploads(newUploads);
+    setShowUploadConfigModal(true);
   };
 
   const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      processFile(selectedFile);
+    if (e.target.files && e.target.files.length > 0) {
+      startUploadConfig(Array.from(e.target.files));
     }
     e.target.value = "";
   };
@@ -385,7 +462,7 @@ export default function DriveDashboard() {
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processFile(e.dataTransfer.files[0]);
+      startUploadConfig(Array.from(e.dataTransfer.files));
     }
   };
 
@@ -430,7 +507,7 @@ export default function DriveDashboard() {
       });
     } catch (error) {
       console.error("Preview failed:", error);
-      alert("Failed to load preview.");
+      setAlertModal({ title: "Preview Failed", message: "Could not load the file preview. Please try again or download the file.", isError: true });
     }
   };
 
@@ -450,7 +527,7 @@ export default function DriveDashboard() {
       window.location.assign(downloadUrl);
     } catch (error) {
       console.error("Download failed:", error);
-      alert("Failed to download the file.");
+      setAlertModal({ title: "Download Failed", message: "Failed to download the file. Please check your network connection.", isError: true });
     }
   };
 
@@ -480,18 +557,19 @@ export default function DriveDashboard() {
 
   const handleUnlockSubmit = async () => {
     if (!unlockItem) return;
-    const hashedInput = await sha256(passwordInput.trim());
+    const plaintextPassword = passwordInput.trim();
+    const hashedInput = await sha256(plaintextPassword);
     if (hashedInput !== unlockItem.correctPassword) {
-      alert("Incorrect password");
+      setAlertModal({ title: "Access Denied", message: "The password you entered is incorrect. Please try again.", isError: true });
       return;
     }
-    const { action, id, name, correctPassword } = unlockItem;
+    const { action, id, name } = unlockItem;
     setUnlockItem(null);
     setPasswordInput("");
     if (action === "open") {
       navigateToFolder(id);
     } else if (action === "download") {
-      handleFolderDownload(id, name, correctPassword);
+      handleFolderDownload(id, name, plaintextPassword);
     }
   };
 
@@ -514,7 +592,7 @@ export default function DriveDashboard() {
       fetchFiles();
     } catch (error) {
       console.error("Delete failed:", error);
-      alert("Failed to delete the file.");
+      setAlertModal({ title: "Delete Failed", message: "Failed to delete the selected item. Please try again.", isError: true });
     }
   };
 
@@ -537,7 +615,7 @@ export default function DriveDashboard() {
       fetchFiles();
     } catch (error) {
       console.error("Rename failed:", error);
-      alert("Failed to rename.");
+      setAlertModal({ title: "Rename Failed", message: "Failed to rename the item. Please try again.", isError: true });
     }
   };
 
@@ -567,15 +645,106 @@ export default function DriveDashboard() {
       fetchFiles();
     } catch (error) {
       console.error("Failed to create folder:", error);
-      alert("Failed to create folder.");
+      setAlertModal({ title: "Folder Creation Failed", message: "Failed to create the folder. Please try again.", isError: true });
     }
   };
 
-  return (
-    <main className="min-h-screen bg-[#f0f4f8] text-slate-900 p-8 font-sans selection:bg-[#9cb4d4] selection:text-white">
-      <div className="max-w-4xl mx-auto space-y-8 mt-12 relative">
+  const getSortedItems = () => {
+    const currentItems = files.filter(f => f.parent_folder === currentFolderId);
+    const foldersList = currentItems.filter(f => f.mime_type === 'application/x-directory');
+    const filesList = currentItems.filter(f => f.mime_type !== 'application/x-directory');
 
-        <header className="border-b border-slate-200 pb-6 flex items-center justify-between">
+    const sortByDate = (a: FileRecord, b: FileRecord) => {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    };
+    
+    foldersList.sort(sortByDate);
+    filesList.sort(sortByDate);
+
+    const savedOrderStr = typeof window !== 'undefined' ? localStorage.getItem(`dss_order_${currentFolderId}`) : null;
+    if (savedOrderStr) {
+      try {
+        const savedOrder: string[] = JSON.parse(savedOrderStr);
+        const orderByCustom = (list: FileRecord[]) => {
+          return list.sort((a, b) => {
+            const idxA = savedOrder.indexOf(a.id);
+            const idxB = savedOrder.indexOf(b.id);
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+            return sortByDate(a, b);
+          });
+        };
+        orderByCustom(foldersList);
+        orderByCustom(filesList);
+      } catch (e) {
+        console.error("Failed to parse custom order", e);
+      }
+    }
+
+    return [...foldersList, ...filesList];
+  };
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    e.dataTransfer.setData("text/plain", id);
+    e.dataTransfer.effectAllowed = "move";
+    // Delay setting draggedId state so the browser captures the fully-opaque card layout as the floating drag image first
+    setTimeout(() => {
+      setDraggedId(id);
+    }, 0);
+  };
+
+  const handleDragOverRow = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDropRow = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer.getData("text/plain") || draggedId;
+    if (!sourceId || sourceId === targetId) return;
+
+    const sorted = getSortedItems();
+    const sourceItem = sorted.find(item => item.id === sourceId);
+    const targetItem = sorted.find(item => item.id === targetId);
+
+    if (!sourceItem || !targetItem) return;
+    const sourceIsFolder = sourceItem.mime_type === 'application/x-directory';
+    const targetIsFolder = targetItem.mime_type === 'application/x-directory';
+    if (sourceIsFolder !== targetIsFolder) return;
+
+    const sameTypeList = sorted.filter(item => 
+      (item.mime_type === 'application/x-directory') === sourceIsFolder
+    );
+
+    const sourceIdx = sameTypeList.findIndex(item => item.id === sourceId);
+    const targetIdx = sameTypeList.findIndex(item => item.id === targetId);
+
+    if (sourceIdx === -1 || targetIdx === -1) return;
+
+    const reorderedList = [...sameTypeList];
+    const [removed] = reorderedList.splice(sourceIdx, 1);
+    reorderedList.splice(targetIdx, 0, removed);
+
+    const otherTypeList = sorted.filter(item => 
+      (item.mime_type === 'application/x-directory') !== sourceIsFolder
+    );
+
+    const newFullList = sourceIsFolder 
+      ? [...reorderedList, ...otherTypeList]
+      : [...otherTypeList, ...reorderedList];
+
+    const newOrderIds = newFullList.map(item => item.id);
+    localStorage.setItem(`dss_order_${currentFolderId}`, JSON.stringify(newOrderIds));
+    
+    setRenderTrigger(prev => prev + 1);
+    setDraggedId(null);
+  };
+
+  return (
+    <main className="h-screen overflow-hidden flex flex-col bg-[#f0f4f8] text-slate-900 p-4 sm:p-8 font-sans selection:bg-[#9cb4d4] selection:text-white">
+      <div className="flex-1 min-h-0 max-w-4xl w-full mx-auto flex flex-col gap-6 sm:gap-8 mt-2 sm:mt-8 relative">
+
+        <header className="shrink-0 border-b border-slate-200 pb-6 flex items-center justify-between">
           <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Storage System (DSS)</h1>
           {currentFolderId !== "/" && (
             <button 
@@ -595,7 +764,7 @@ export default function DriveDashboard() {
         </header>
 
         <section 
-          className={`bg-white shadow-sm border rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all duration-300 ${
+          className={`shrink-0 bg-white shadow-sm border rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all duration-300 ${
             isDragging ? 'border-[#9cb4d4] bg-[#e6eef5] shadow-[0_0_30px_rgba(156,180,212,0.95),_0_0_15px_rgba(156,180,212,0.6)] ring-4 ring-[#9cb4d4]/40 scale-[1.02]' : 'border-slate-200 hover:border-[#9cb4d4] hover:shadow-[0_0_15px_rgba(156,180,212,0.2)]'
           }`}
           onDragOver={handleDragOver}
@@ -615,15 +784,15 @@ export default function DriveDashboard() {
           ) : (
             <label className="cursor-pointer text-center p-6 w-full">
               <span className="text-slate-800 block text-xl font-bold mb-2">Click Here to Start Uploading</span>
-              <span className="text-slate-500 text-sm block">Upload this file here. The maximum upload limit is 2GB.</span>
-              <input type="file" className="hidden" onChange={handleFileSelection} />
+              <span className="text-slate-500 text-sm block">Upload your files here. The maximum upload limit is 2GB.</span>
+              <input type="file" className="hidden" onChange={handleFileSelection} multiple />
             </label>
           )}
         </section>
 
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold tracking-tight text-slate-900">Storage Node Matrix</h2>
+        <section className="flex-1 min-h-0 flex flex-col gap-4 pb-2 sm:pb-4">
+          <div className="shrink-0 flex items-center justify-between">
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">Our Uploaded Files</h2>
             <button
               onClick={handleAddFolder}
               className="bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white hover:border-[#9cb4d4] active:bg-[#9cb4d4] active:text-white active:border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
@@ -633,7 +802,7 @@ export default function DriveDashboard() {
           </div>
 
           {currentFolderId !== "/" && (
-            <div className="flex items-center gap-2 text-sm text-[#6a87aa] font-medium font-mono pb-2">
+            <div className="shrink-0 flex items-center gap-2 text-sm text-[#6a87aa] font-medium font-mono pb-2">
               <span
                 className="hover:underline cursor-pointer"
                 onClick={() => navigateToFolder("/")}
@@ -667,8 +836,13 @@ export default function DriveDashboard() {
             </div>
           )}
 
-          <div className="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden">
-            {files.filter(f => f.parent_folder === currentFolderId).length === 0 ? (
+          <div className="relative flex-1 min-h-0">
+            <div
+              ref={listRef}
+              onScroll={checkScrollable}
+              className="h-full bg-white shadow-sm border border-slate-200 rounded-2xl overflow-y-auto"
+            >
+              {files.filter(f => f.parent_folder === currentFolderId).length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-sm font-medium">
                 {currentFolderId === "/"
                   ? "No metadata tracks verified in Supabase ledger index."
@@ -676,11 +850,11 @@ export default function DriveDashboard() {
               </div>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {files
-                  .filter((file) => file.parent_folder === currentFolderId)
-                  .map((file) => (
+                {getSortedItems().map((file) => (
                     <li
                       key={file.id}
+                      onDragOver={handleDragOverRow}
+                      onDrop={(e) => handleDropRow(e, file.id)}
                       onClick={() => {
                         if (file.mime_type === 'application/x-directory') {
                           attemptNavigateToFolder(file);
@@ -688,23 +862,45 @@ export default function DriveDashboard() {
                           handlePreviewRowClick(file);
                         }
                       }}
-                      className="p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group"
+                      className={`p-5 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 cursor-pointer group select-none ${
+                        draggedId === file.id ? 'opacity-40 bg-slate-100' : ''
+                      }`}
                       title={file.mime_type === 'application/x-directory' ? "Open Folder" : "Click to Preview"}
                     >
-                      <div className="space-y-1 flex-1 min-w-0 pr-6 md:pr-10">
-                        <FilenameDisplay
-                          name={file.name}
-                          isExpanded={!!expandedFiles[file.id]}
-                          onToggleExpand={() => {
-                            setExpandedFiles((prev) => ({ ...prev, [file.id]: !prev[file.id] }));
+                      <div className="flex-1 min-w-0 flex items-center gap-2 pr-4 md:pr-10">
+                        {/* Drag Handle (Hamburger Icon) */}
+                        <div 
+                          draggable
+                          onDragStart={(e) => {
+                            e.stopPropagation();
+                            handleDragStart(e, file.id);
                           }}
-                          icon={file.mime_type === 'application/x-directory' ? <FolderIcon /> : <FileIcon />}
-                        />
-                        <p className="text-xs text-slate-500 font-medium ml-7">
-                          {file.mime_type === 'application/x-directory'
-                            ? 'Folder'
-                            : `${(file.size / 1024 / 1024).toFixed(2)} MB • ${file.mime_type}`}
-                        </p>
+                          className="text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing shrink-0 flex items-center p-1"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Drag to rearrange"
+                        >
+                          <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 9h16M4 15h16" />
+                          </svg>
+                        </div>
+ 
+                        <div className="flex-1 min-w-0">
+                          <FilenameDisplay
+                            name={file.name}
+                            isExpanded={!!expandedFiles[file.id]}
+                            onToggleExpand={() => {
+                              setExpandedFiles((prev) => ({ ...prev, [file.id]: !prev[file.id] }));
+                            }}
+                            icon={file.mime_type === 'application/x-directory' ? <FolderIcon /> : <FileIcon />}
+                            subtitle={
+                              <p className="text-xs text-slate-500 font-medium">
+                                {file.mime_type === 'application/x-directory'
+                                  ? 'Folder'
+                                  : `${(file.size / 1024 / 1024).toFixed(2)} MB • ${file.mime_type}`}
+                              </p>
+                            }
+                          />
+                        </div>
                       </div>
 
                       <div className="relative flex items-center">
@@ -732,72 +928,193 @@ export default function DriveDashboard() {
                               {file.mime_type !== 'application/x-directory' ? (
                                 <button
                                   onClick={(e) => { handleDownloadAction(e, file.storage_key, file.name); setOpenDropdownId(null); }}
-                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-2"
                                 >
-                                  Download
+                                  <svg
+                                    className="w-4 h-4 shrink-0"
+                                    fill="none; stroke=currentColor"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    viewBox="0 0 24 24"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" x2="12" y1="15" y2="3" />
+                                  </svg>
+                                  <span>Download</span>
                                 </button>
                               ) : (
                                 <button
                                   onClick={(e) => { attemptDownloadFolder(e, file); setOpenDropdownId(null); }}
-                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
+                                  className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-2"
                                 >
-                                  Download
+                                  <svg
+                                    className="w-4 h-4 shrink-0"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    viewBox="0 0 24 24"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" x2="12" y1="15" y2="3" />
+                                  </svg>
+                                  <span>Download</span>
                                 </button>
                               )}
-                              <button
-                                onClick={(e) => { handleRenameAction(e, file.id, file.name); setOpenDropdownId(null); }}
-                                className="w-full text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-500 hover:text-white active:bg-slate-500 active:text-white rounded-lg font-bold transition-colors cursor-pointer"
-                              >
-                                Rename
-                              </button>
-                              <button
-                                onClick={(e) => { handleDeleteAction(e, file.id, file.storage_key, file.name); setOpenDropdownId(null); }}
-                                className="w-full text-left px-3 py-2 text-sm text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white active:bg-[#cf6d6d] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
-                              >
-                                Delete
-                              </button>
-                            </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setRenameItem(file); setOpenDropdownId(null); }}
+                                  className='w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-2'
+                                >
+                                  <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z' /></svg>
+                                  <span>Rename</span>
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setDeleteItem({ id: file.id, storageKey: file.storage_key, name: file.name }); setOpenDropdownId(null); }}
+                                  className='w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-2'
+                                >
+                                  <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' /></svg>
+                                  <span>Delete</span>
+                                </button>
+                              </div>
                             </>
                           )}
                         </div>
 
-                        {/* Desktop Buttons */}
-                        <div className="hidden md:flex items-center gap-3">
-                          {file.mime_type !== 'application/x-directory' ? (
-                            <button
-                              onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
-                              className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
-                            >
-                              Download
-                            </button>
-                          ) : (
-                            <button
-                              onClick={(e) => attemptDownloadFolder(e, file)}
-                              className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
-                            >
-                              Download
-                            </button>
-                          )}
-
+                      {/* Desktop Buttons */}
+                      <div className='hidden md:flex items-center gap-2'>
+                        {file.mime_type !== 'application/x-directory' ? (
                           <button
-                            onClick={(e) => handleRenameAction(e, file.id, file.name)}
-                            className="bg-white border border-slate-400 text-slate-500 hover:!bg-slate-500 hover:!text-white hover:!border-slate-500 active:!bg-slate-500 active:!text-white active:!border-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                            onClick={(e) => handleDownloadAction(e, file.storage_key, file.name)}
+                            className='group/btn flex items-center justify-center gap-0 hover:gap-1.5 px-2.5 hover:px-4 py-2.5 bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] rounded-lg transition-all duration-300 ease-in-out shadow-sm active:scale-95 cursor-pointer overflow-hidden whitespace-nowrap'
+                            title='Download File'
+                            aria-label='Download file'
                           >
+                            <svg
+                              className='w-4.5 h-4.5 shrink-0'
+                              fill='none'
+                              stroke='currentColor'
+                              strokeWidth={2}
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              viewBox='0 0 24 24'
+                              xmlns='http://www.w3.org/2000/svg'
+                            >
+                              <path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' />
+                              <polyline points='7 10 12 15 17 10' />
+                              <line x1='12' x2='12' y1='15' y2='3' />
+                            </svg>
+                            <span className='inline-block max-w-0 opacity-0 overflow-hidden group-hover/btn:max-w-[100px] group-hover/btn:opacity-100 transition-all duration-300 ease-in-out font-bold text-xs'>
+                              Download
+                            </span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={(e) => attemptDownloadFolder(e, file)}
+                            className='group/btn flex items-center justify-center gap-0 hover:gap-1.5 px-2.5 hover:px-4 py-2.5 bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] rounded-lg transition-all duration-300 ease-in-out shadow-sm active:scale-95 cursor-pointer overflow-hidden whitespace-nowrap'
+                            title='Download Folder'
+                            aria-label='Download folder'
+                          >
+                            <svg
+                              className='w-4.5 h-4.5 shrink-0'
+                              fill='none'
+                              stroke='currentColor'
+                              strokeWidth={2}
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              viewBox='0 0 24 24'
+                              xmlns='http://www.w3.org/2000/svg'
+                            >
+                              <path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' />
+                              <polyline points='7 10 12 15 17 10' />
+                              <line x1='12' x2='12' y1='15' y2='3' />
+                            </svg>
+                            <span className='inline-block max-w-0 opacity-0 overflow-hidden group-hover/btn:max-w-[100px] group-hover/btn:opacity-100 transition-all duration-300 ease-in-out font-bold text-xs'>
+                              Download
+                            </span>
+                          </button>
+                        )}
+
+                        <button
+                          onClick={(e) => handleRenameAction(e, file.id, file.name)}
+                          className='group/btn flex items-center justify-center gap-0 hover:gap-1.5 px-2.5 hover:px-4 py-2.5 bg-white border border-slate-400 text-slate-500 hover:!bg-slate-500 hover:!text-white hover:!border-slate-500 rounded-lg transition-all duration-300 ease-in-out shadow-sm active:scale-95 cursor-pointer overflow-hidden whitespace-nowrap'
+                          title='Rename'
+                          aria-label='Rename item'
+                        >
+                          <svg
+                            className='w-4.5 h-4.5 shrink-0'
+                            fill='none'
+                            stroke='currentColor'
+                            strokeWidth={0}
+                            viewBox='0 0 24 24'
+                            xmlns='http://www.w3.org/2000/svg'
+                          >
+                            <path d='M9.75 2h4a.75.75 0 0 1 .1 1.5H12.5v17h1.25c.37 0 .69.28.74.65v.1c0 .38-.28.7-.64.74l-.1.01h-4a.75.75 0 0 1-.1-1.5H11v-17H9.75a.75.75 0 0 1-.74-.65L9 2.75c0-.38.28-.7.65-.74l.1-.01h-4-4Zm8.5 3c1.79 0 3.24 1.45 3.25 3.25v7.5A3.25 3.25 0 0 1 18.25 19h-4a.75.75 0 0 1-.1-1.5h4c.97 0 1.75-.78 1.75-1.75v-7.5c0-.97-.78-1.75-1.75-1.75h-4a.75.75 0 0 1-.1-1.5h4ZM4.75 5h4c.38 0 .7.28.74.65v.1c0 .38-.28.7-.64.74l-.1.01h-4c-.97 0-1.75.78-1.75 1.75v7.5c0 .97.78 1.75 1.75 1.75h4a.75.75 0 0 1 .1 1.5h-4a3.25 3.25 0 0 1-3.25-3.25v-7.5c0-1.8 1.45-3.25 3.25-3.25Z' fill='currentColor'/>
+                          </svg>
+                          <span className='inline-block max-w-0 opacity-0 overflow-hidden group-hover/btn:max-w-[100px] group-hover/btn:opacity-100 transition-all duration-300 ease-in-out font-bold text-xs'>
                             Rename
-                          </button>
+                          </span>
+                        </button>
 
-                          <button
-                            onClick={(e) => handleDeleteAction(e, file.id, file.storage_key, file.name)}
-                            className="bg-white border border-[#e29393] text-[#cf6d6d] hover:!bg-[#cf6d6d] hover:!text-white hover:!border-[#cf6d6d] active:!bg-[#cf6d6d] active:!text-white active:!border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                        <button
+                          onClick={(e) => handleDeleteAction(e, file.id, file.storage_key, file.name)}
+                          className='group/btn flex items-center justify-center gap-0 hover:gap-1.5 px-2.5 hover:px-4 py-2.5 bg-white border border-[#e29393] text-[#cf6d6d] hover:!bg-[#cf6d6d] hover:!text-white hover:!border-[#cf6d6d] rounded-lg transition-all duration-300 ease-in-out shadow-sm active:scale-95 cursor-pointer overflow-hidden whitespace-nowrap'
+                          title='Delete'
+                          aria-label='Delete item'
+                        >
+                          <svg
+                            className='w-4.5 h-4.5 shrink-0'
+                            fill='none'
+                            stroke='currentColor'
+                            strokeWidth={2}
+                            strokeLinecap='round'
+                            strokeLinejoin='round'
+                            viewBox='0 0 24 24'
+                            xmlns='http://www.w3.org/2000/svg'
                           >
+                            <path d='M3 6h18' />
+                            <path d='M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' />
+                            <path d='M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' />
+                            <line x1='10' x2='10' y1='11' y2='17' />
+                            <line x1='14' x2='14' y1='11' y2='17' />
+                          </svg>
+                          <span className='inline-block max-w-0 opacity-0 overflow-hidden group-hover/btn:max-w-[100px] group-hover/btn:opacity-100 transition-all duration-300 ease-in-out font-bold text-xs'>
                             Delete
-                          </button>
-                        </div>
+                          </span>
+                        </button>
                       </div>
+                    </div>
                     </li>
                   ))}
               </ul>
             )}
+            </div>
+
+            {/* Bottom Fade-out Effect */}
+            <div
+              className={`pointer-events-none absolute bottom-[1px] left-[1px] right-[1px] h-12 bg-gradient-to-t from-white via-white/80 to-transparent rounded-b-2xl transition-opacity duration-300 z-10 ${
+                showScrollIndicator ? "opacity-100" : "opacity-0"
+              }`}
+            />
+
+            {/* Scroll indicator arrow */}
+            <div
+              className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none transition-all duration-300 ${
+                showScrollIndicator ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
+              }`}
+            >
+              <div className="bg-[#9cb4d4] text-white p-1.5 rounded-full shadow-lg border border-white/50 animate-bounce">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -1048,6 +1365,152 @@ export default function DriveDashboard() {
                   className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                 >
                   Unlock
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- UPLOAD CONFIG MODAL --- */}
+      {showUploadConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity">
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
+              <h3 className='font-mono font-bold text-slate-800'>Configure Uploads</h3>
+              <button onClick={() => setShowUploadConfigModal(false)} className='text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors'>Close</button>
+            </div>
+            <div className='p-6 overflow-y-auto space-y-6'>
+              <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-blue-50 text-blue-800 text-sm p-4 rounded-lg font-medium border border-blue-100'>
+                <span>ℹ️ By default, files are deleted after 2 weeks. You can change this below.</span>
+                <label className='bg-white border border-[#9cb4d4] text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer select-none shrink-0 text-center'>
+                  Add More Files
+                  <input
+                    type='file'
+                    className='hidden'
+                    multiple
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        const filesArray = Array.from(e.target.files);
+                        const newUploads = filesArray.map(f => ({
+                          id: crypto.randomUUID(),
+                          file: f,
+                          customName: f.name,
+                          uploaderName: pendingUploads[0]?.uploaderName || '',
+                          expiration: '2w' as const
+                        }));
+                        setPendingUploads(prev => [...prev, ...newUploads]);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+              {pendingUploads.map((pu, idx) => (
+                <div key={pu.id} className='border border-slate-200 rounded-xl p-4 space-y-4 bg-slate-50 relative'>
+                  <div className='flex justify-between items-center'>
+                    <span className='text-xs font-bold text-slate-400 uppercase'>File #{idx + 1}</span>
+                    {pendingUploads.length > 1 && (
+                      <button
+                        onClick={() => {
+                          setPendingUploads(prev => prev.filter(item => item.id !== pu.id));
+                        }}
+                        className='text-xs text-red-500 hover:text-red-700 font-bold hover:underline cursor-pointer'
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div className='flex flex-col gap-1'>
+                    <label className='text-xs font-bold text-slate-500 uppercase'>Filename</label>
+                    <input type='text' value={pu.customName} onChange={e => {
+                      const newUploads = [...pendingUploads];
+                      newUploads[idx].customName = e.target.value;
+                      setPendingUploads(newUploads);
+                    }} className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-mono text-sm' />
+                  </div>
+                  <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+                    <div className='flex flex-col gap-1'>
+                      <label className='text-xs font-bold text-slate-500 uppercase'>Uploader Name *</label>
+                      <input type='text' value={pu.uploaderName} onChange={e => {
+                        const newUploads = [...pendingUploads];
+                        newUploads[idx].uploaderName = e.target.value;
+                        setPendingUploads(newUploads);
+                      }} placeholder='Required' className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-sans text-sm' />
+                    </div>
+                    <div className='flex flex-col gap-1'>
+                      <label className='text-xs font-bold text-slate-500 uppercase'>Password (Optional)</label>
+                      <input type='password' value={pu.password || ''} onChange={e => {
+                        const newUploads = [...pendingUploads];
+                        newUploads[idx].password = e.target.value;
+                        setPendingUploads(newUploads);
+                      }} placeholder='Leave blank for public' className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#eab308] font-mono text-sm' />
+                    </div>
+                    <div className='flex flex-col gap-1'>
+                      <label className='text-xs font-bold text-slate-500 uppercase'>Expiration</label>
+                      <select 
+                        value={pu.expiration} 
+                        onChange={e => {
+                          const newUploads = [...pendingUploads];
+                          newUploads[idx].expiration = e.target.value as any;
+                          setPendingUploads(newUploads);
+                        }} 
+                        className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-sans text-sm bg-white'
+                        style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
+                      >
+                        <option value='1d' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Day</option>
+                        <option value='1w' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Week</option>
+                        <option value='2w' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>2 Weeks (Default)</option>
+                        <option value='1m' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Month</option>
+                        <option value='2m' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>2 Months</option>
+                        <option value='forever' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>Keep Forever</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className='p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3'>
+              <button onClick={() => setShowUploadConfigModal(false)} className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50">Cancel</button>
+              <button onClick={handleConfirmUploads} className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95">Start Upload</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- CUSTOM ALERT MODAL --- */}
+      {alertModal && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity"
+          onClick={() => setAlertModal(null)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`flex items-center justify-between p-4 border-b ${alertModal.isError ? 'border-red-100 bg-[#fff5f5]' : 'border-slate-100 bg-slate-50'}`}>
+              <h3 className={`font-mono font-bold ${alertModal.isError ? 'text-[#cf6d6d]' : 'text-slate-800'}`}>
+                {alertModal.title}
+              </h3>
+              <button
+                onClick={() => setAlertModal(null)}
+                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 font-medium whitespace-pre-line leading-relaxed">{alertModal.message}</p>
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={() => setAlertModal(null)}
+                  className={`text-xs font-bold py-2 px-5 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer ${
+                    alertModal.isError 
+                      ? 'bg-[#e29393] text-red-700 border border-[#e29393] hover:bg-[#cf6d6d] hover:text-white hover:border-[#cf6d6d]' 
+                      : 'bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white'
+                  }`}
+                >
+                  OK
                 </button>
               </div>
             </div>

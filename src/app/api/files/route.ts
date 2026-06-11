@@ -31,13 +31,31 @@ export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 500 });
   try {
     const body = await request.json();
-    const { name, size, mimeType, storageKey, parentFolder } = body;
+    const { name, size, mimeType, storageKey, parentFolder, uploaderName, password, expiresAt } = body;
 
-    if (!name || !storageKey) return NextResponse.json({ error: "Missing ledger data" }, { status: 400 });
+    const isFolder = mimeType === "application/x-directory";
+    if (!name || !storageKey || (!isFolder && !uploaderName)) {
+      return NextResponse.json({ error: "Missing required ledger data" }, { status: 400 });
+    }
 
-    const { error } = await supabase.from("files").insert([
-      { name, size, mime_type: mimeType, storage_key: storageKey, parent_folder: parentFolder || "/" }
-    ]);
+    let hashedPassword = undefined;
+    if (password) {
+      hashedPassword = await sha256(password);
+    }
+
+    const insertData: any = { 
+      name, 
+      size, 
+      mime_type: mimeType, 
+      storage_key: storageKey, 
+      parent_folder: parentFolder || "/"
+    };
+    
+    if (uploaderName) insertData.uploader_name = uploaderName.trim();
+    if (hashedPassword) insertData.password = hashedPassword;
+    if (expiresAt) insertData.expires_at = expiresAt;
+
+    const { error } = await supabase.from("files").insert([insertData]);
     
     if (error) throw error;
     return NextResponse.json({ message: "Ledger updated successfully" }, { status: 200 });
