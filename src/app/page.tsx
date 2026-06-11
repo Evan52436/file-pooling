@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { sha256 } from "../lib/hash";
 
 // UUID to URL-friendly base64 encoding helpers
 function uuidToShortId(uuid: string): string {
@@ -134,6 +135,7 @@ interface FileRecord {
   storage_key: string;
   parent_folder: string;
   created_at: string;
+  password?: string;
 }
 
 // Added 'previewable' flag to the state interface
@@ -171,6 +173,7 @@ export default function DriveDashboard() {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   const [previewData, setPreviewData] = useState<PreviewState | null>(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -180,6 +183,8 @@ export default function DriveDashboard() {
   const [deleteItem, setDeleteItem] = useState<{ id: string, storageKey: string, name: string } | null>(null);
   const [renameItem, setRenameItem] = useState<{ id: string, name: string } | null>(null);
   const [newName, setNewName] = useState("");
+  const [unlockItem, setUnlockItem] = useState<{ id: string, name: string, action: "open" | "download", correctPassword?: string } | null>(null);
+  const [passwordInput, setPasswordInput] = useState("");
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
 
@@ -223,9 +228,12 @@ export default function DriveDashboard() {
 
 
 
-  const handleFileSelection = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+  const processFile = async (selectedFile: File) => {
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      alert("File size exceeds 2GB limit.");
+      return;
+    }
 
     try {
       setIsUploading(true);
@@ -355,6 +363,32 @@ export default function DriveDashboard() {
     }
   };
 
+  const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      processFile(selectedFile);
+    }
+    e.target.value = "";
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFile(e.dataTransfer.files[0]);
+    }
+  };
+
   // 1. The Row Click (Pre-flight Validation added)
   const handlePreviewRowClick = async (file: FileRecord) => {
     if (file.mime_type === 'application/x-directory') return;
@@ -420,9 +454,45 @@ export default function DriveDashboard() {
     }
   };
 
-  const handleFolderDownload = (e: React.MouseEvent, folderId: string, folderName: string) => {
+  const handleFolderDownload = (folderId: string, folderName: string, password?: string) => {
+    const pwdParam = password ? `&password=${encodeURIComponent(password)}` : "";
+    window.location.assign(`/api/download/folder?id=${folderId}&name=${encodeURIComponent(folderName)}${pwdParam}`);
+  };
+
+  const attemptNavigateToFolder = (folder: FileRecord) => {
+    if (folder.password) {
+      setUnlockItem({ id: folder.id, name: folder.name, action: "open", correctPassword: folder.password });
+      setPasswordInput("");
+    } else {
+      navigateToFolder(folder.id);
+    }
+  };
+
+  const attemptDownloadFolder = (e: React.MouseEvent, folder: FileRecord) => {
     e.stopPropagation();
-    window.location.assign(`/api/download/folder?id=${folderId}&name=${encodeURIComponent(folderName)}`);
+    if (folder.password) {
+      setUnlockItem({ id: folder.id, name: folder.name, action: "download", correctPassword: folder.password });
+      setPasswordInput("");
+    } else {
+      handleFolderDownload(folder.id, folder.name, "");
+    }
+  };
+
+  const handleUnlockSubmit = async () => {
+    if (!unlockItem) return;
+    const hashedInput = await sha256(passwordInput.trim());
+    if (hashedInput !== unlockItem.correctPassword) {
+      alert("Incorrect password");
+      return;
+    }
+    const { action, id, name, correctPassword } = unlockItem;
+    setUnlockItem(null);
+    setPasswordInput("");
+    if (action === "open") {
+      navigateToFolder(id);
+    } else if (action === "download") {
+      handleFolderDownload(id, name, correctPassword);
+    }
   };
 
   const handleDeleteAction = (e: React.MouseEvent, id: string, storageKey: string, name: string) => {
@@ -506,7 +576,7 @@ export default function DriveDashboard() {
       <div className="max-w-4xl mx-auto space-y-8 mt-12 relative">
 
         <header className="border-b border-slate-200 pb-6 flex items-center justify-between">
-          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Storage System</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Decoupled Storage System (DSS)</h1>
           {currentFolderId !== "/" && (
             <button 
               onClick={() => {
@@ -524,7 +594,14 @@ export default function DriveDashboard() {
           )}
         </header>
 
-        <section className="bg-white shadow-sm border border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all hover:border-[#9cb4d4]">
+        <section 
+          className={`bg-white shadow-sm border rounded-2xl p-6 flex flex-col items-center justify-center border-dashed relative overflow-hidden transition-all duration-300 ${
+            isDragging ? 'border-[#9cb4d4] bg-[#e6eef5] shadow-[0_0_30px_rgba(156,180,212,0.95),_0_0_15px_rgba(156,180,212,0.6)] ring-4 ring-[#9cb4d4]/40 scale-[1.02]' : 'border-slate-200 hover:border-[#9cb4d4] hover:shadow-[0_0_15px_rgba(156,180,212,0.2)]'
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           {isUploading ? (
             <div className="w-full space-y-4 text-center py-4">
               <span className="text-sm font-bold text-[#6a87aa]">Uploading Your Files... {uploadProgress}%</span>
@@ -538,7 +615,7 @@ export default function DriveDashboard() {
           ) : (
             <label className="cursor-pointer text-center p-6 w-full">
               <span className="text-slate-800 block text-xl font-bold mb-2">Click Here to Start Uploading</span>
-              <span className="text-slate-500 text-sm block">Upload this file here. Supports large files beyond 100MB via chunking.</span>
+              <span className="text-slate-500 text-sm block">Upload this file here. The maximum upload limit is 2GB.</span>
               <input type="file" className="hidden" onChange={handleFileSelection} />
             </label>
           )}
@@ -606,7 +683,7 @@ export default function DriveDashboard() {
                       key={file.id}
                       onClick={() => {
                         if (file.mime_type === 'application/x-directory') {
-                          navigateToFolder(file.id);
+                          attemptNavigateToFolder(file);
                         } else {
                           handlePreviewRowClick(file);
                         }
@@ -661,7 +738,7 @@ export default function DriveDashboard() {
                                 </button>
                               ) : (
                                 <button
-                                  onClick={(e) => { handleFolderDownload(e, file.id, file.name); setOpenDropdownId(null); }}
+                                  onClick={(e) => { attemptDownloadFolder(e, file); setOpenDropdownId(null); }}
                                   className="w-full text-left px-3 py-2 text-sm text-[#9cb4d4] hover:bg-[#9cb4d4] hover:text-white active:bg-[#9cb4d4] active:text-white rounded-lg font-bold transition-colors cursor-pointer"
                                 >
                                   Download
@@ -695,7 +772,7 @@ export default function DriveDashboard() {
                             </button>
                           ) : (
                             <button
-                              onClick={(e) => handleFolderDownload(e, file.id, file.name)}
+                              onClick={(e) => attemptDownloadFolder(e, file)}
                               className="bg-[#9cb4d4] border border-[#9cb4d4] text-white hover:!bg-white hover:!text-[#9cb4d4] hover:!border-[#9cb4d4] active:!bg-white active:!text-[#9cb4d4] active:!border-[#9cb4d4] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                             >
                               Download
@@ -915,6 +992,62 @@ export default function DriveDashboard() {
                   className="bg-white border border-[#e29393] text-[#cf6d6d] hover:bg-[#cf6d6d] hover:text-white hover:border-[#cf6d6d] text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
                 >
                   Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- UNLOCK FOLDER MODAL --- */}
+      {unlockItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity"
+          onClick={() => setUnlockItem(null)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-mono font-bold text-slate-800">Folder is Locked</h3>
+              <button
+                onClick={() => setUnlockItem(null)}
+                className="text-slate-400 hover:text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-md text-sm font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 font-medium">
+                Please enter the password to {unlockItem.action} <span className="font-bold text-slate-800">"{unlockItem.name}"</span>
+              </p>
+              <input
+                type="password"
+                placeholder="Password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-mono text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleUnlockSubmit();
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setUnlockItem(null)}
+                  className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUnlockSubmit}
+                  className="bg-[#9cb4d4] hover:bg-white hover:text-[#9cb4d4] border border-[#9cb4d4] text-white text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 cursor-pointer"
+                >
+                  Unlock
                 </button>
               </div>
             </div>

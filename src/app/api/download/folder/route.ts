@@ -4,6 +4,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { s3Client } from "../../../../lib/s3";
 import { ZipArchive } from "archiver";
 import { PassThrough } from "stream";
+import { sha256 } from "../../../../lib/hash";
 
 export const dynamic = 'force-dynamic';
 
@@ -32,18 +33,30 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const folderId = searchParams.get("id");
   const folderName = searchParams.get("name") || "folder";
+  const providedPassword = searchParams.get("password") || "";
 
   if (!folderId) return NextResponse.json({ error: "Missing folder id" }, { status: 400 });
 
   try {
-    // 1. Fetch all files to build the tree in memory (efficient enough for normal use cases)
+    // 1. Fetch the target folder to verify password if any
+    const { data: targetFolder, error: targetFolderError } = await supabase.from("files").select("password").eq("id", folderId).single();
+    if (targetFolderError) throw targetFolderError;
+
+    if (targetFolder.password) {
+      const hashedProvided = await sha256(providedPassword);
+      if (targetFolder.password !== hashedProvided) {
+        return NextResponse.json({ error: "Unauthorized: Invalid password" }, { status: 401 });
+      }
+    }
+
+    // 2. Fetch all files to build the tree in memory (efficient enough for normal use cases)
     const { data: allFiles, error } = await supabase.from("files").select("*");
     if (error) throw error;
 
-    // 2. Recursively find all files under the given folderId
+    // 3. Recursively find all files under the given folderId
     const filesToDownload = getAllNestedFiles(allFiles, folderId, "");
 
-    // 3. Prepare ZIP Stream using archiver
+    // 4. Prepare ZIP Stream using archiver
     const passThrough = new PassThrough();
     const archive = new ZipArchive({ zlib: { level: 5 } });
 
