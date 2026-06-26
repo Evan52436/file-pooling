@@ -154,9 +154,6 @@ interface PendingUpload {
   id: string;
   file: File;
   customName: string;
-  uploaderName: string;
-  password?: string;
-  expiration: "1d" | "1w" | "2w" | "1m" | "2m" | "forever";
 }
 
 const FolderIcon = () => (
@@ -202,6 +199,9 @@ export default function DriveDashboard() {
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
 
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  const [globalUploaderName, setGlobalUploaderName] = useState("");
+  const [globalExpiration, setGlobalExpiration] = useState<"1d" | "1w" | "2w" | "1m" | "2m" | "forever">("2w");
+  const [globalPassword, setGlobalPassword] = useState("");
   const [showUploadConfigModal, setShowUploadConfigModal] = useState(false);
   const [alertModal, setAlertModal] = useState<{ title: string; message: string; isError?: boolean } | null>(null);
   const [renderTrigger, setRenderTrigger] = useState(0);
@@ -307,9 +307,9 @@ export default function DriveDashboard() {
       mimeType: selectedFile.type,
       storageKey: handshakeData.storageKey || handshakeData.uploadId,
       parentFolder: currentFolderId,
-      uploaderName: pu.uploaderName.trim(),
-      password: pu.password,
-      expiresAt: getExpirationDate(pu.expiration)
+      uploaderName: globalUploaderName.trim(),
+      password: globalPassword,
+      expiresAt: getExpirationDate(globalExpiration)
     };
 
     if (handshakeData.uploadUrl) {
@@ -394,11 +394,13 @@ export default function DriveDashboard() {
 
   const handleConfirmUploads = async () => {
     // Validation
-    for (const pu of pendingUploads) {
-      if (!pu.uploaderName.trim()) {
-        setAlertModal({ title: "Validation Error", message: `Uploader name is required for "${pu.customName}".`, isError: true });
-        return;
-      }
+    if (!globalUploaderName.trim()) {
+      setAlertModal({ title: "Validation Error", message: "Uploader name is required.", isError: true });
+      return;
+    }
+    if (pendingUploads.length === 0) {
+      setAlertModal({ title: "Validation Error", message: "No files to upload.", isError: true });
+      return;
     }
 
     setShowUploadConfigModal(false);
@@ -434,8 +436,6 @@ export default function DriveDashboard() {
       id: crypto.randomUUID(),
       file: f,
       customName: f.name,
-      uploaderName: "",
-      expiration: "2w" as const
     }));
     setPendingUploads(newUploads);
     setShowUploadConfigModal(true);
@@ -1396,8 +1396,6 @@ export default function DriveDashboard() {
                           id: crypto.randomUUID(),
                           file: f,
                           customName: f.name,
-                          uploaderName: pendingUploads[0]?.uploaderName || '',
-                          expiration: '2w' as const
                         }));
                         setPendingUploads(prev => [...prev, ...newUploads]);
                       }
@@ -1406,69 +1404,116 @@ export default function DriveDashboard() {
                   />
                 </label>
               </div>
-              {pendingUploads.map((pu, idx) => (
-                <div key={pu.id} className='border border-slate-200 rounded-xl p-4 space-y-4 bg-slate-50 relative'>
-                  <div className='flex justify-between items-center'>
-                    <span className='text-xs font-bold text-slate-400 uppercase'>File #{idx + 1}</span>
-                    {pendingUploads.length > 1 && (
-                      <button
-                        onClick={() => {
-                          setPendingUploads(prev => prev.filter(item => item.id !== pu.id));
-                        }}
-                        className='text-xs text-red-500 hover:text-red-700 font-bold hover:underline cursor-pointer'
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <div className='flex flex-col gap-1'>
-                    <label className='text-xs font-bold text-slate-500 uppercase'>Filename</label>
-                    <input type='text' value={pu.customName} onChange={e => {
-                      const newUploads = [...pendingUploads];
-                      newUploads[idx].customName = e.target.value;
-                      setPendingUploads(newUploads);
-                    }} className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-mono text-sm' />
-                  </div>
-                  <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
-                    <div className='flex flex-col gap-1'>
-                      <label className='text-xs font-bold text-slate-500 uppercase'>Uploader Name *</label>
-                      <input type='text' value={pu.uploaderName} onChange={e => {
-                        const newUploads = [...pendingUploads];
-                        newUploads[idx].uploaderName = e.target.value;
-                        setPendingUploads(newUploads);
-                      }} placeholder='Required' className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-sans text-sm' />
-                    </div>
-                    <div className='flex flex-col gap-1'>
-                      <label className='text-xs font-bold text-slate-500 uppercase'>Password (Optional)</label>
-                      <input type='password' value={pu.password || ''} onChange={e => {
-                        const newUploads = [...pendingUploads];
-                        newUploads[idx].password = e.target.value;
-                        setPendingUploads(newUploads);
-                      }} placeholder='Leave blank for public' className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#eab308] font-mono text-sm' />
-                    </div>
-                    <div className='flex flex-col gap-1'>
-                      <label className='text-xs font-bold text-slate-500 uppercase'>Expiration</label>
-                      <select 
-                        value={pu.expiration} 
-                        onChange={e => {
-                          const newUploads = [...pendingUploads];
-                          newUploads[idx].expiration = e.target.value as any;
-                          setPendingUploads(newUploads);
-                        }} 
-                        className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-sans text-sm bg-white'
-                        style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
-                      >
-                        <option value='1d' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Day</option>
-                        <option value='1w' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Week</option>
-                        <option value='2w' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>2 Weeks (Default)</option>
-                        <option value='1m' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Month</option>
-                        <option value='2m' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>2 Months</option>
-                        <option value='forever' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>Keep Forever</option>
-                      </select>
-                    </div>
-                  </div>
+              {/* Global Settings */}
+              <div className='grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border border-slate-200 rounded-xl bg-slate-50'>
+                <div className='flex flex-col gap-1'>
+                  <label className='text-xs font-bold text-slate-500 uppercase'>Uploader Name *</label>
+                  <input type='text' value={globalUploaderName} onChange={e => setGlobalUploaderName(e.target.value)} placeholder='Required' className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-sans text-sm' />
                 </div>
-              ))}
+                <div className='flex flex-col gap-1'>
+                  <label className='text-xs font-bold text-slate-500 uppercase'>Password (Optional)</label>
+                  <input type='password' value={globalPassword} onChange={e => setGlobalPassword(e.target.value)} placeholder='Leave blank for public' className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#eab308] font-mono text-sm' />
+                </div>
+                <div className='flex flex-col gap-1'>
+                  <label className='text-xs font-bold text-slate-500 uppercase'>Expiration</label>
+                  <select 
+                    value={globalExpiration} 
+                    onChange={e => setGlobalExpiration(e.target.value as any)} 
+                    className='w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-[#9cb4d4] font-sans text-sm bg-white'
+                    style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
+                  >
+                    <option value='1d' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Day</option>
+                    <option value='1w' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Week</option>
+                    <option value='2w' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>2 Weeks (Default)</option>
+                    <option value='1m' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>1 Month</option>
+                    <option value='2m' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>2 Months</option>
+                    <option value='forever' style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>Keep Forever</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Files List */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                <ul className="divide-y divide-slate-100 max-h-[40vh] overflow-y-auto">
+                  {pendingUploads.map((pu) => (
+                    <li key={pu.id} className="p-4 flex items-center justify-between text-sm hover:bg-slate-50 transition-colors duration-200 group">
+                      <div className="flex-1 min-w-0 flex items-center gap-2 pr-4">
+                        <div className="flex-1 min-w-0">
+                          <FilenameDisplay
+                            name={pu.customName}
+                            isExpanded={false}
+                            onToggleExpand={() => {}}
+                            icon={<FileIcon />}
+                            subtitle={
+                              <p className="text-xs text-slate-500 font-medium">
+                                {(pu.file.size / 1024 / 1024).toFixed(2)} MB • {pu.file.type || 'unknown'}
+                              </p>
+                            }
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            const newName = prompt("Enter new filename:", pu.customName);
+                            if (newName && newName.trim()) {
+                              setPendingUploads(prev => prev.map(p => p.id === pu.id ? { ...p, customName: newName.trim() } : p));
+                            }
+                          }}
+                          className='group/btn flex items-center justify-center gap-0 hover:gap-1.5 px-2.5 hover:px-4 py-2.5 bg-white border border-slate-400 text-slate-500 hover:!bg-slate-500 hover:!text-white hover:!border-slate-500 rounded-lg transition-all duration-300 ease-in-out shadow-sm active:scale-95 cursor-pointer overflow-hidden whitespace-nowrap'
+                          title='Rename'
+                        >
+                          <svg
+                            className='w-4.5 h-4.5 shrink-0'
+                            fill='none'
+                            stroke='currentColor'
+                            strokeWidth={0}
+                            viewBox='0 0 24 24'
+                            xmlns='http://www.w3.org/2000/svg'
+                          >
+                            <path d='M9.75 2h4a.75.75 0 0 1 .1 1.5H12.5v17h1.25c.37 0 .69.28.74.65v.1c0 .38-.28.7-.64.74l-.1.01h-4a.75.75 0 0 1-.1-1.5H11v-17H9.75a.75.75 0 0 1-.74-.65L9 2.75c0-.38.28-.7.65-.74l.1-.01h-4-4Zm8.5 3c1.79 0 3.24 1.45 3.25 3.25v7.5A3.25 3.25 0 0 1 18.25 19h-4a.75.75 0 0 1-.1-1.5h4c.97 0 1.75-.78 1.75-1.75v-7.5c0-.97-.78-1.75-1.75-1.75h-4a.75.75 0 0 1-.1-1.5h4ZM4.75 5h4c.38 0 .7.28.74.65v.1c0 .38-.28.7-.64.74l-.1.01h-4c-.97 0-1.75.78-1.75 1.75v7.5c0 .97.78 1.75 1.75 1.75h4a.75.75 0 0 1 .1 1.5h-4a3.25 3.25 0 0 1-3.25-3.25v-7.5c0-1.8 1.45-3.25 3.25-3.25Z' fill='currentColor'/>
+                          </svg>
+                          <span className='inline-block max-w-0 opacity-0 overflow-hidden group-hover/btn:max-w-[100px] group-hover/btn:opacity-100 transition-all duration-300 ease-in-out font-bold text-xs'>
+                            Rename
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => setPendingUploads(prev => prev.filter(item => item.id !== pu.id))}
+                          className='group/btn flex items-center justify-center gap-0 hover:gap-1.5 px-2.5 hover:px-4 py-2.5 bg-white border border-[#e29393] text-[#cf6d6d] hover:!bg-[#cf6d6d] hover:!text-white hover:!border-[#cf6d6d] rounded-lg transition-all duration-300 ease-in-out shadow-sm active:scale-95 cursor-pointer overflow-hidden whitespace-nowrap'
+                          title='Remove'
+                        >
+                          <svg
+                            className='w-4.5 h-4.5 shrink-0'
+                            fill='none'
+                            stroke='currentColor'
+                            strokeWidth={2}
+                            strokeLinecap='round'
+                            strokeLinejoin='round'
+                            viewBox='0 0 24 24'
+                            xmlns='http://www.w3.org/2000/svg'
+                          >
+                            <path d='M3 6h18' />
+                            <path d='M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' />
+                            <path d='M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' />
+                            <line x1='10' x2='10' y1='11' y2='17' />
+                            <line x1='14' x2='14' y1='11' y2='17' />
+                          </svg>
+                          <span className='inline-block max-w-0 opacity-0 overflow-hidden group-hover/btn:max-w-[100px] group-hover/btn:opacity-100 transition-all duration-300 ease-in-out font-bold text-xs'>
+                            Remove
+                          </span>
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                  {pendingUploads.length === 0 && (
+                    <li className="p-8 text-center text-slate-400 text-sm font-medium">
+                      No files selected.
+                    </li>
+                  )}
+                </ul>
+              </div>
             </div>
             <div className='p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3'>
               <button onClick={() => setShowUploadConfigModal(false)} className="bg-white border border-slate-200 text-slate-500 text-xs font-bold py-2 px-4 rounded-lg transition-colors shadow-sm active:scale-95 hover:bg-slate-50">Cancel</button>
