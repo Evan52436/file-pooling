@@ -107,6 +107,7 @@ export async function GET(request: Request) {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${safeName}.zip"; filename*=UTF-8''${safeName}.zip`,
+        "Set-Cookie": "downloadStarted=1; Path=/; Max-Age=20; SameSite=Lax",
       },
     });
 
@@ -115,3 +116,4 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Folder download failed" }, { status: 500 });
   }
 }
+
