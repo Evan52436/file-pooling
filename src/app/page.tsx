@@ -182,6 +182,31 @@ const FileIcon = () => (
   </svg>
 );
 
+async function fetchWithRetry(url: RequestInfo | URL, options?: RequestInit, maxRetries: number = 3, backoff: number = 1000): Promise<Response> {
+  let attempt = 0;
+  while (attempt <= maxRetries) {
+    try {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        if ((res.status >= 500 || res.status === 429) && attempt < maxRetries) {
+          attempt++;
+          await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
+          continue;
+        }
+      }
+      return res;
+    } catch (error) {
+      if (attempt < maxRetries) {
+        attempt++;
+        await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Unreachable");
+}
+
 export default function DriveDashboard() {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -287,7 +312,7 @@ export default function DriveDashboard() {
     }
 
     setProgress(10);
-    const handshakeResponse = await fetch("/api/upload", {
+    const handshakeResponse = await fetchWithRetry("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -314,7 +339,7 @@ export default function DriveDashboard() {
 
     if (handshakeData.uploadUrl) {
       // STANDARD UPLOAD PATH
-      const uploadResponse = await fetch(handshakeData.uploadUrl, {
+      const uploadResponse = await fetchWithRetry(handshakeData.uploadUrl, {
         method: "PUT",
         headers: { "Content-Type": selectedFile.type },
         body: selectedFile,
@@ -324,7 +349,7 @@ export default function DriveDashboard() {
       setProgress(70);
 
       metadataPayload.storageKey = handshakeData.storageKey;
-      const metadataResponse = await fetch("/api/files", {
+      const metadataResponse = await fetchWithRetry("/api/files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(metadataPayload),
@@ -343,7 +368,7 @@ export default function DriveDashboard() {
           const end = Math.min(start + chunkSize, selectedFile.size);
           const chunk = selectedFile.slice(start, end);
 
-          const uploadResponse = await fetch(partUrls[i], {
+          const uploadResponse = await fetchWithRetry(partUrls[i], {
             method: "PUT",
             body: chunk,
           });
@@ -356,7 +381,7 @@ export default function DriveDashboard() {
         }
 
         setProgress(85);
-        const completeResponse = await fetch("/api/upload/complete", {
+        const completeResponse = await fetchWithRetry("/api/upload/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -371,7 +396,7 @@ export default function DriveDashboard() {
         setProgress(90);
 
         metadataPayload.storageKey = storageKey;
-        const metadataResponse = await fetch("/api/files", {
+        const metadataResponse = await fetchWithRetry("/api/files", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(metadataPayload),
@@ -381,7 +406,7 @@ export default function DriveDashboard() {
 
       } catch (err) {
         console.error("Multipart failed, attempting abort...", err);
-        await fetch("/api/upload/complete", {
+        await fetchWithRetry("/api/upload/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "abort", uploadId, storageKey }),
